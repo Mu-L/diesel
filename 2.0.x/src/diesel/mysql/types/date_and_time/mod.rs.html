@@ -1,0 +1,282 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `diesel/src/mysql/types/date_and_time/mod.rs`."><meta name="keywords" content="rust, rustlang, rust-lang"><title>mod.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../SourceSerif4-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../FiraSans-Regular.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../FiraSans-Medium.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../SourceCodePro-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../SourceSerif4-Bold.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../../SourceCodePro-Semibold.ttf.woff2"><link rel="stylesheet" href="../../../../../normalize.css"><link rel="stylesheet" href="../../../../../rustdoc.css" id="mainThemeStyle"><link rel="stylesheet" href="../../../../../ayu.css" disabled><link rel="stylesheet" href="../../../../../dark.css" disabled><link rel="stylesheet" href="../../../../../light.css" id="themeStyle"><script id="default-settings" ></script><script src="../../../../../storage.js"></script><script defer src="../../../../../source-script.js"></script><script defer src="../../../../../source-files.js"></script><script defer src="../../../../../main.js"></script><noscript><link rel="stylesheet" href="../../../../../noscript.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../../favicon-16x16.png"><link rel="alternate icon" type="image/png" href="../../../../../favicon-32x32.png"><link rel="icon" type="image/svg+xml" href="../../../../../favicon.svg"></head><body class="rustdoc source"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="sidebar-logo" href="../../../../../diesel/index.html"><div class="logo-container"><img class="rust-logo" src="../../../../../rust-logo.svg" alt="logo"></div></a><h2 class="location"></h2></nav><nav class="sidebar"><a class="sidebar-logo" href="../../../../../diesel/index.html"><div class="logo-container"><img class="rust-logo" src="../../../../../rust-logo.svg" alt="logo"></div></a></nav><main><div class="width-limiter"><div class="sub-container"><a class="sub-logo-container" href="../../../../../diesel/index.html"><img class="rust-logo" src="../../../../../rust-logo.svg" alt="logo"></a><nav class="sub"><form class="search-form"><div class="search-container"><span></span><input class="search-input" name="search" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><button type="button">?</button></div><div id="settings-menu" tabindex="-1"><a href="../../../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../../../wheel.svg"></a></div></div></form></nav></div><section id="main-content" class="content"><div class="example-wrap"><pre class="line-numbers"><span id="1">1</span>
+<span id="2">2</span>
+<span id="3">3</span>
+<span id="4">4</span>
+<span id="5">5</span>
+<span id="6">6</span>
+<span id="7">7</span>
+<span id="8">8</span>
+<span id="9">9</span>
+<span id="10">10</span>
+<span id="11">11</span>
+<span id="12">12</span>
+<span id="13">13</span>
+<span id="14">14</span>
+<span id="15">15</span>
+<span id="16">16</span>
+<span id="17">17</span>
+<span id="18">18</span>
+<span id="19">19</span>
+<span id="20">20</span>
+<span id="21">21</span>
+<span id="22">22</span>
+<span id="23">23</span>
+<span id="24">24</span>
+<span id="25">25</span>
+<span id="26">26</span>
+<span id="27">27</span>
+<span id="28">28</span>
+<span id="29">29</span>
+<span id="30">30</span>
+<span id="31">31</span>
+<span id="32">32</span>
+<span id="33">33</span>
+<span id="34">34</span>
+<span id="35">35</span>
+<span id="36">36</span>
+<span id="37">37</span>
+<span id="38">38</span>
+<span id="39">39</span>
+<span id="40">40</span>
+<span id="41">41</span>
+<span id="42">42</span>
+<span id="43">43</span>
+<span id="44">44</span>
+<span id="45">45</span>
+<span id="46">46</span>
+<span id="47">47</span>
+<span id="48">48</span>
+<span id="49">49</span>
+<span id="50">50</span>
+<span id="51">51</span>
+<span id="52">52</span>
+<span id="53">53</span>
+<span id="54">54</span>
+<span id="55">55</span>
+<span id="56">56</span>
+<span id="57">57</span>
+<span id="58">58</span>
+<span id="59">59</span>
+<span id="60">60</span>
+<span id="61">61</span>
+<span id="62">62</span>
+<span id="63">63</span>
+<span id="64">64</span>
+<span id="65">65</span>
+<span id="66">66</span>
+<span id="67">67</span>
+<span id="68">68</span>
+<span id="69">69</span>
+<span id="70">70</span>
+<span id="71">71</span>
+<span id="72">72</span>
+<span id="73">73</span>
+<span id="74">74</span>
+<span id="75">75</span>
+<span id="76">76</span>
+<span id="77">77</span>
+<span id="78">78</span>
+<span id="79">79</span>
+<span id="80">80</span>
+<span id="81">81</span>
+<span id="82">82</span>
+<span id="83">83</span>
+<span id="84">84</span>
+<span id="85">85</span>
+<span id="86">86</span>
+<span id="87">87</span>
+<span id="88">88</span>
+<span id="89">89</span>
+<span id="90">90</span>
+<span id="91">91</span>
+<span id="92">92</span>
+<span id="93">93</span>
+<span id="94">94</span>
+<span id="95">95</span>
+<span id="96">96</span>
+<span id="97">97</span>
+<span id="98">98</span>
+<span id="99">99</span>
+<span id="100">100</span>
+<span id="101">101</span>
+<span id="102">102</span>
+<span id="103">103</span>
+<span id="104">104</span>
+<span id="105">105</span>
+<span id="106">106</span>
+<span id="107">107</span>
+<span id="108">108</span>
+<span id="109">109</span>
+<span id="110">110</span>
+<span id="111">111</span>
+<span id="112">112</span>
+<span id="113">113</span>
+<span id="114">114</span>
+<span id="115">115</span>
+<span id="116">116</span>
+<span id="117">117</span>
+<span id="118">118</span>
+<span id="119">119</span>
+<span id="120">120</span>
+<span id="121">121</span>
+<span id="122">122</span>
+<span id="123">123</span>
+<span id="124">124</span>
+<span id="125">125</span>
+<span id="126">126</span>
+<span id="127">127</span>
+<span id="128">128</span>
+<span id="129">129</span>
+<span id="130">130</span>
+<span id="131">131</span>
+<span id="132">132</span>
+<span id="133">133</span>
+<span id="134">134</span>
+<span id="135">135</span>
+<span id="136">136</span>
+<span id="137">137</span>
+<span id="138">138</span>
+<span id="139">139</span>
+<span id="140">140</span>
+</pre><pre class="rust"><code><span class="kw">use </span>std::io::Write;
+<span class="kw">use </span>std::os::raw <span class="kw">as </span>libc;
+<span class="kw">use </span>std::{mem, slice};
+
+<span class="kw">use </span><span class="kw">crate</span>::deserialize::{<span class="self">self</span>, FromSql, FromSqlRow};
+<span class="kw">use </span><span class="kw">crate</span>::expression::AsExpression;
+<span class="kw">use </span><span class="kw">crate</span>::mysql::{Mysql, MysqlValue};
+<span class="kw">use </span><span class="kw">crate</span>::serialize::{<span class="self">self</span>, IsNull, Output, ToSql};
+<span class="kw">use </span><span class="kw">crate</span>::sql_types::{Date, Datetime, Time, Timestamp};
+
+<span class="attribute">#[cfg(feature = <span class="string">&quot;chrono&quot;</span>)]
+</span><span class="kw">mod </span>chrono;
+<span class="attribute">#[cfg(feature = <span class="string">&quot;time&quot;</span>)]
+</span><span class="kw">mod </span>time;
+
+<span class="comment">// This is a type from libmysqlclient
+// we have our own copy here to not break the
+// public API as soon as this type changes
+// in the mysqlclient-sys dependency
+</span><span class="doccomment">/// Corresponding rust representation of the
+/// [MYSQL_TIME](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html)
+/// struct from libmysqlclient
+</span><span class="attribute">#[repr(C)]
+#[derive(Debug, Clone, Copy, AsExpression, FromSqlRow)]
+#[non_exhaustive]
+#[diesel(sql_type = Timestamp)]
+#[diesel(sql_type = Time)]
+#[diesel(sql_type = Date)]
+#[diesel(sql_type = Datetime)]
+</span><span class="kw">pub struct </span>MysqlTime {
+    <span class="doccomment">/// [Year field](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#af585231d3ed0bc2fa389856e61e15d4e)
+    </span><span class="kw">pub </span>year: libc::c_uint,
+    <span class="doccomment">/// [Month field](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#ad3e92bddbd9ccf2e50117bdd51c235a2)
+    </span><span class="kw">pub </span>month: libc::c_uint,
+    <span class="doccomment">/// [Day field](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#ad51088bd5ab4ddc02e62d778d71ed808)
+    </span><span class="kw">pub </span>day: libc::c_uint,
+    <span class="doccomment">/// [Hour field](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#a7717a9c4de23a22863fe9c20b0706274)
+    </span><span class="kw">pub </span>hour: libc::c_uint,
+    <span class="doccomment">/// [Minute field](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#acfad0dafd22da03a527c58fdebfa9d14)
+    </span><span class="kw">pub </span>minute: libc::c_uint,
+    <span class="doccomment">/// [Second field](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#a4cceb29d1a457f2ea961ce0d893814da)
+    </span><span class="kw">pub </span>second: libc::c_uint,
+    <span class="doccomment">/// [Microseconds](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#a2e0fddb071af25ff478d16dc5514ba71)
+    </span><span class="kw">pub </span>second_part: libc::c_ulong,
+    <span class="doccomment">/// [Is this a negative timestamp](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#af13161fbff85e4fe0ec9cd49b6eac1b8)
+    </span><span class="kw">pub </span>neg: bool,
+    <span class="doccomment">/// [Timestamp type](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#a5331236f9b527a6e6b5f23d7c8058665)
+    </span><span class="kw">pub </span>time_type: MysqlTimestampType,
+    <span class="doccomment">/// [Time zone displacement specified is seconds](https://dev.mysql.com/doc/dev/mysql-server/latest/structMYSQL__TIME.html#a07f3c8e1989c9805ba919d2120c8fed4)
+    </span><span class="kw">pub </span>time_zone_displacement: libc::c_int,
+}
+
+<span class="kw">impl </span>MysqlTime {
+    <span class="doccomment">/// Construct a new instance of [MysqlTime]
+    </span><span class="attribute">#[allow(clippy::too_many_arguments)]
+    </span><span class="kw">pub fn </span>new(
+        year: libc::c_uint,
+        month: libc::c_uint,
+        day: libc::c_uint,
+        hour: libc::c_uint,
+        minute: libc::c_uint,
+        second: libc::c_uint,
+        second_part: libc::c_ulong,
+        neg: bool,
+        time_type: MysqlTimestampType,
+        time_zone_displacement: libc::c_int,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            second_part,
+            neg,
+            time_type,
+            time_zone_displacement,
+        }
+    }
+}
+
+<span class="comment">// This is a type from libmysqlclient
+// we have our own copy here to not break the
+// public API as soon as this type changes
+// in the mysqlclient-sys dependency
+</span><span class="doccomment">/// Rust representation of
+/// [enum_mysql_timestamp_type](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73)
+</span><span class="attribute">#[derive(PartialEq, Debug, Copy, Clone, Eq)]
+#[repr(transparent)]
+</span><span class="kw">pub struct </span>MysqlTimestampType(libc::c_int);
+
+<span class="kw">impl </span>MysqlTimestampType {
+    <span class="doccomment">/// Rust representation of
+    /// [MYSQL_TIMESTAMP_NONE](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73ace26c6b7d67a27c905dbcd130b3bd807)
+    </span><span class="kw">pub const </span>MYSQL_TIMESTAMP_NONE: MysqlTimestampType = MysqlTimestampType(-<span class="number">2</span>);
+    <span class="doccomment">/// Rust representation of
+    /// [MYSQL_TIMESTAMP_ERROR](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73a3518624dcc1eaca8d816c52aa7528f72)
+    </span><span class="kw">pub const </span>MYSQL_TIMESTAMP_ERROR: MysqlTimestampType = MysqlTimestampType(-<span class="number">1</span>);
+    <span class="doccomment">/// Rust representation of
+    /// [MYSQL_TIMESTAMP_DATE](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73a9e0845dc169b1f0056d2ffa3780c3f4e)
+    </span><span class="kw">pub const </span>MYSQL_TIMESTAMP_DATE: MysqlTimestampType = MysqlTimestampType(<span class="number">0</span>);
+    <span class="doccomment">/// Rust representation of
+    /// [MYSQL_TIMESTAMP_DATETIME](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73a8f6d8f066ea6ea77280c6a0baf063ce1)
+    </span><span class="kw">pub const </span>MYSQL_TIMESTAMP_DATETIME: MysqlTimestampType = MysqlTimestampType(<span class="number">1</span>);
+    <span class="doccomment">/// Rust representation of
+    /// [MYSQL_TIMESTAMP_TIME](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73a283c50fa3c62a2e17ad5173442edbbb9)
+    </span><span class="kw">pub const </span>MYSQL_TIMESTAMP_TIME: MysqlTimestampType = MysqlTimestampType(<span class="number">2</span>);
+    <span class="doccomment">/// Rust representation of
+    /// [MYSQL_TIMESTAMP_DATETIME_TZ](https://dev.mysql.com/doc/dev/mysql-server/latest/mysql__time_8h.html#aa633db8da896a5a0cc00ffcfb7477e73a7afc91f565961eb5f3beebfebe7243a2)
+    </span><span class="kw">pub const </span>MYSQL_TIMESTAMP_DATETIME_TZ: MysqlTimestampType = MysqlTimestampType(<span class="number">3</span>);
+}
+
+<span class="macro">macro_rules! </span>mysql_time_impls {
+    (<span class="macro-nonterminal">$ty</span>:ty) =&gt; {
+        <span class="attribute">#[cfg(feature = <span class="string">&quot;mysql_backend&quot;</span>)]
+        </span><span class="kw">impl </span>ToSql&lt;<span class="macro-nonterminal">$ty</span>, Mysql&gt; <span class="kw">for </span>MysqlTime {
+            <span class="kw">fn </span>to_sql&lt;<span class="lifetime">&#39;b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">&#39;b </span><span class="self">self</span>, out: <span class="kw-2">&amp;mut </span>Output&lt;<span class="lifetime">&#39;b</span>, <span class="lifetime">&#39;_</span>, Mysql&gt;) -&gt; serialize::Result {
+                <span class="kw">let </span>bytes = <span class="kw">unsafe </span>{
+                    <span class="kw">let </span>bytes_ptr = <span class="self">self </span><span class="kw">as </span><span class="kw-2">*const </span>MysqlTime <span class="kw">as </span><span class="kw-2">*const </span>u8;
+                    slice::from_raw_parts(bytes_ptr, mem::size_of::&lt;MysqlTime&gt;())
+                };
+                out.write_all(bytes)<span class="question-mark">?</span>;
+                <span class="prelude-val">Ok</span>(IsNull::No)
+            }
+        }
+
+        <span class="attribute">#[cfg(feature = <span class="string">&quot;mysql_backend&quot;</span>)]
+        </span><span class="kw">impl </span>FromSql&lt;<span class="macro-nonterminal">$ty</span>, Mysql&gt; <span class="kw">for </span>MysqlTime {
+            <span class="kw">fn </span>from_sql(value: MysqlValue&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; deserialize::Result&lt;<span class="self">Self</span>&gt; {
+                value.time_value()
+            }
+        }
+    };
+}
+
+<span class="macro">mysql_time_impls!</span>(Datetime);
+<span class="macro">mysql_time_impls!</span>(Timestamp);
+<span class="macro">mysql_time_impls!</span>(Time);
+<span class="macro">mysql_time_impls!</span>(Date);
+</code></pre></div>
+</section></div></main><div id="rustdoc-vars" data-root-path="../../../../../" data-current-crate="diesel" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.65.0-nightly (ce36e8825 2022-08-28)" ></div></body></html>

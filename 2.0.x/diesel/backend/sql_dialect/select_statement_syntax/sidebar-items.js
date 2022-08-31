@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":[["AnsiSqlSelectStatement","Indicates that this backend uses the default ANSI select statement structure"]]};

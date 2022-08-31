@@ -1,0 +1,504 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `diesel/src/pg/types/record.rs`."><meta name="keywords" content="rust, rustlang, rust-lang"><title>record.rs - source</title><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../SourceSerif4-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../FiraSans-Regular.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../FiraSans-Medium.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../SourceCodePro-Regular.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../SourceSerif4-Bold.ttf.woff2"><link rel="preload" as="font" type="font/woff2" crossorigin href="../../../../SourceCodePro-Semibold.ttf.woff2"><link rel="stylesheet" href="../../../../normalize.css"><link rel="stylesheet" href="../../../../rustdoc.css" id="mainThemeStyle"><link rel="stylesheet" href="../../../../ayu.css" disabled><link rel="stylesheet" href="../../../../dark.css" disabled><link rel="stylesheet" href="../../../../light.css" id="themeStyle"><script id="default-settings" ></script><script src="../../../../storage.js"></script><script defer src="../../../../source-script.js"></script><script defer src="../../../../source-files.js"></script><script defer src="../../../../main.js"></script><noscript><link rel="stylesheet" href="../../../../noscript.css"></noscript><link rel="alternate icon" type="image/png" href="../../../../favicon-16x16.png"><link rel="alternate icon" type="image/png" href="../../../../favicon-32x32.png"><link rel="icon" type="image/svg+xml" href="../../../../favicon.svg"></head><body class="rustdoc source"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="mobile-topbar"><button class="sidebar-menu-toggle">&#9776;</button><a class="sidebar-logo" href="../../../../diesel/index.html"><div class="logo-container"><img class="rust-logo" src="../../../../rust-logo.svg" alt="logo"></div></a><h2 class="location"></h2></nav><nav class="sidebar"><a class="sidebar-logo" href="../../../../diesel/index.html"><div class="logo-container"><img class="rust-logo" src="../../../../rust-logo.svg" alt="logo"></div></a></nav><main><div class="width-limiter"><div class="sub-container"><a class="sub-logo-container" href="../../../../diesel/index.html"><img class="rust-logo" src="../../../../rust-logo.svg" alt="logo"></a><nav class="sub"><form class="search-form"><div class="search-container"><span></span><input class="search-input" name="search" autocomplete="off" spellcheck="false" placeholder="Click or press ‘S’ to search, ‘?’ for more options…" type="search"><div id="help-button" title="help" tabindex="-1"><button type="button">?</button></div><div id="settings-menu" tabindex="-1"><a href="../../../../settings.html" title="settings"><img width="22" height="22" alt="Change settings" src="../../../../wheel.svg"></a></div></div></form></nav></div><section id="main-content" class="content"><div class="example-wrap"><pre class="line-numbers"><span id="1">1</span>
+<span id="2">2</span>
+<span id="3">3</span>
+<span id="4">4</span>
+<span id="5">5</span>
+<span id="6">6</span>
+<span id="7">7</span>
+<span id="8">8</span>
+<span id="9">9</span>
+<span id="10">10</span>
+<span id="11">11</span>
+<span id="12">12</span>
+<span id="13">13</span>
+<span id="14">14</span>
+<span id="15">15</span>
+<span id="16">16</span>
+<span id="17">17</span>
+<span id="18">18</span>
+<span id="19">19</span>
+<span id="20">20</span>
+<span id="21">21</span>
+<span id="22">22</span>
+<span id="23">23</span>
+<span id="24">24</span>
+<span id="25">25</span>
+<span id="26">26</span>
+<span id="27">27</span>
+<span id="28">28</span>
+<span id="29">29</span>
+<span id="30">30</span>
+<span id="31">31</span>
+<span id="32">32</span>
+<span id="33">33</span>
+<span id="34">34</span>
+<span id="35">35</span>
+<span id="36">36</span>
+<span id="37">37</span>
+<span id="38">38</span>
+<span id="39">39</span>
+<span id="40">40</span>
+<span id="41">41</span>
+<span id="42">42</span>
+<span id="43">43</span>
+<span id="44">44</span>
+<span id="45">45</span>
+<span id="46">46</span>
+<span id="47">47</span>
+<span id="48">48</span>
+<span id="49">49</span>
+<span id="50">50</span>
+<span id="51">51</span>
+<span id="52">52</span>
+<span id="53">53</span>
+<span id="54">54</span>
+<span id="55">55</span>
+<span id="56">56</span>
+<span id="57">57</span>
+<span id="58">58</span>
+<span id="59">59</span>
+<span id="60">60</span>
+<span id="61">61</span>
+<span id="62">62</span>
+<span id="63">63</span>
+<span id="64">64</span>
+<span id="65">65</span>
+<span id="66">66</span>
+<span id="67">67</span>
+<span id="68">68</span>
+<span id="69">69</span>
+<span id="70">70</span>
+<span id="71">71</span>
+<span id="72">72</span>
+<span id="73">73</span>
+<span id="74">74</span>
+<span id="75">75</span>
+<span id="76">76</span>
+<span id="77">77</span>
+<span id="78">78</span>
+<span id="79">79</span>
+<span id="80">80</span>
+<span id="81">81</span>
+<span id="82">82</span>
+<span id="83">83</span>
+<span id="84">84</span>
+<span id="85">85</span>
+<span id="86">86</span>
+<span id="87">87</span>
+<span id="88">88</span>
+<span id="89">89</span>
+<span id="90">90</span>
+<span id="91">91</span>
+<span id="92">92</span>
+<span id="93">93</span>
+<span id="94">94</span>
+<span id="95">95</span>
+<span id="96">96</span>
+<span id="97">97</span>
+<span id="98">98</span>
+<span id="99">99</span>
+<span id="100">100</span>
+<span id="101">101</span>
+<span id="102">102</span>
+<span id="103">103</span>
+<span id="104">104</span>
+<span id="105">105</span>
+<span id="106">106</span>
+<span id="107">107</span>
+<span id="108">108</span>
+<span id="109">109</span>
+<span id="110">110</span>
+<span id="111">111</span>
+<span id="112">112</span>
+<span id="113">113</span>
+<span id="114">114</span>
+<span id="115">115</span>
+<span id="116">116</span>
+<span id="117">117</span>
+<span id="118">118</span>
+<span id="119">119</span>
+<span id="120">120</span>
+<span id="121">121</span>
+<span id="122">122</span>
+<span id="123">123</span>
+<span id="124">124</span>
+<span id="125">125</span>
+<span id="126">126</span>
+<span id="127">127</span>
+<span id="128">128</span>
+<span id="129">129</span>
+<span id="130">130</span>
+<span id="131">131</span>
+<span id="132">132</span>
+<span id="133">133</span>
+<span id="134">134</span>
+<span id="135">135</span>
+<span id="136">136</span>
+<span id="137">137</span>
+<span id="138">138</span>
+<span id="139">139</span>
+<span id="140">140</span>
+<span id="141">141</span>
+<span id="142">142</span>
+<span id="143">143</span>
+<span id="144">144</span>
+<span id="145">145</span>
+<span id="146">146</span>
+<span id="147">147</span>
+<span id="148">148</span>
+<span id="149">149</span>
+<span id="150">150</span>
+<span id="151">151</span>
+<span id="152">152</span>
+<span id="153">153</span>
+<span id="154">154</span>
+<span id="155">155</span>
+<span id="156">156</span>
+<span id="157">157</span>
+<span id="158">158</span>
+<span id="159">159</span>
+<span id="160">160</span>
+<span id="161">161</span>
+<span id="162">162</span>
+<span id="163">163</span>
+<span id="164">164</span>
+<span id="165">165</span>
+<span id="166">166</span>
+<span id="167">167</span>
+<span id="168">168</span>
+<span id="169">169</span>
+<span id="170">170</span>
+<span id="171">171</span>
+<span id="172">172</span>
+<span id="173">173</span>
+<span id="174">174</span>
+<span id="175">175</span>
+<span id="176">176</span>
+<span id="177">177</span>
+<span id="178">178</span>
+<span id="179">179</span>
+<span id="180">180</span>
+<span id="181">181</span>
+<span id="182">182</span>
+<span id="183">183</span>
+<span id="184">184</span>
+<span id="185">185</span>
+<span id="186">186</span>
+<span id="187">187</span>
+<span id="188">188</span>
+<span id="189">189</span>
+<span id="190">190</span>
+<span id="191">191</span>
+<span id="192">192</span>
+<span id="193">193</span>
+<span id="194">194</span>
+<span id="195">195</span>
+<span id="196">196</span>
+<span id="197">197</span>
+<span id="198">198</span>
+<span id="199">199</span>
+<span id="200">200</span>
+<span id="201">201</span>
+<span id="202">202</span>
+<span id="203">203</span>
+<span id="204">204</span>
+<span id="205">205</span>
+<span id="206">206</span>
+<span id="207">207</span>
+<span id="208">208</span>
+<span id="209">209</span>
+<span id="210">210</span>
+<span id="211">211</span>
+<span id="212">212</span>
+<span id="213">213</span>
+<span id="214">214</span>
+<span id="215">215</span>
+<span id="216">216</span>
+<span id="217">217</span>
+<span id="218">218</span>
+<span id="219">219</span>
+<span id="220">220</span>
+<span id="221">221</span>
+<span id="222">222</span>
+<span id="223">223</span>
+<span id="224">224</span>
+<span id="225">225</span>
+<span id="226">226</span>
+<span id="227">227</span>
+<span id="228">228</span>
+<span id="229">229</span>
+<span id="230">230</span>
+<span id="231">231</span>
+<span id="232">232</span>
+<span id="233">233</span>
+<span id="234">234</span>
+<span id="235">235</span>
+<span id="236">236</span>
+<span id="237">237</span>
+<span id="238">238</span>
+<span id="239">239</span>
+<span id="240">240</span>
+<span id="241">241</span>
+<span id="242">242</span>
+<span id="243">243</span>
+<span id="244">244</span>
+<span id="245">245</span>
+<span id="246">246</span>
+<span id="247">247</span>
+<span id="248">248</span>
+<span id="249">249</span>
+<span id="250">250</span>
+<span id="251">251</span>
+</pre><pre class="rust"><code><span class="kw">use </span>byteorder::<span class="kw-2">*</span>;
+<span class="kw">use </span>std::io::Write;
+<span class="kw">use </span>std::num::NonZeroU32;
+
+<span class="kw">use </span><span class="kw">crate</span>::deserialize::{<span class="self">self</span>, FromSql, Queryable};
+<span class="kw">use </span><span class="kw">crate</span>::expression::{
+    AppearsOnTable, AsExpression, Expression, SelectableExpression, TypedExpressionType,
+    ValidGrouping,
+};
+<span class="kw">use </span><span class="kw">crate</span>::pg::{Pg, PgValue};
+<span class="kw">use </span><span class="kw">crate</span>::query_builder::bind_collector::ByteWrapper;
+<span class="kw">use </span><span class="kw">crate</span>::query_builder::{AstPass, QueryFragment, QueryId};
+<span class="kw">use </span><span class="kw">crate</span>::result::QueryResult;
+<span class="kw">use </span><span class="kw">crate</span>::serialize::{<span class="self">self</span>, IsNull, Output, ToSql, WriteTuple};
+<span class="kw">use </span><span class="kw">crate</span>::sql_types::{HasSqlType, Record, SqlType};
+
+<span class="macro">macro_rules! </span>tuple_impls {
+    ($(
+        <span class="macro-nonterminal">$Tuple</span>:tt {
+            $((<span class="macro-nonterminal">$idx</span>:tt) -&gt; <span class="macro-nonterminal">$T</span>:ident, <span class="macro-nonterminal">$ST</span>:ident, <span class="macro-nonterminal">$TT</span>:ident,)+
+        }
+    )+) =&gt; {$(
+        <span class="attribute">#[cfg(feature = <span class="string">&quot;postgres_backend&quot;</span>)]
+        </span><span class="kw">impl</span>&lt;$(<span class="macro-nonterminal">$T</span>,)+ $(<span class="macro-nonterminal">$ST</span>,)+&gt; FromSql&lt;Record&lt;($(<span class="macro-nonterminal">$ST</span>,)+)&gt;, Pg&gt; <span class="kw">for </span>($(<span class="macro-nonterminal">$T</span>,)+)
+        <span class="kw">where
+            </span>$(<span class="macro-nonterminal">$T</span>: FromSql&lt;<span class="macro-nonterminal">$ST</span>, Pg&gt;,)+
+        {
+            <span class="comment">// Yes, we&#39;re relying on the order of evaluation of subexpressions
+            // but the only other option would be to use `mem::uninitialized`
+            // and `ptr::write`.
+            </span><span class="attribute">#[allow(clippy::mixed_read_write_in_expression)]
+            </span><span class="kw">fn </span>from_sql(value: PgValue&lt;<span class="lifetime">&#39;_</span>&gt;) -&gt; deserialize::Result&lt;<span class="self">Self</span>&gt; {
+                <span class="kw">let </span><span class="kw-2">mut </span>bytes = value.as_bytes();
+                <span class="kw">let </span>num_elements = bytes.read_i32::&lt;NetworkEndian&gt;()<span class="question-mark">?</span>;
+
+                <span class="kw">if </span>num_elements != <span class="macro-nonterminal">$Tuple </span>{
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+                        <span class="string">&quot;Expected a tuple of {} elements, got {}&quot;</span>,
+                        <span class="macro-nonterminal">$Tuple</span>,
+                        num_elements,
+                    ).into());
+                }
+
+                <span class="kw">let </span>result = ($({
+                    <span class="comment">// We could in theory validate the OID here, but that
+                    // ignores cases like text vs varchar where the
+                    // representation is the same and we don&#39;t care which we
+                    // got.
+                    </span><span class="kw">let </span>oid = NonZeroU32::new(bytes.read_u32::&lt;NetworkEndian&gt;()<span class="question-mark">?</span>).expect(<span class="string">&quot;Oid&#39;s aren&#39;t zero&quot;</span>);
+                    <span class="kw">let </span>num_bytes = bytes.read_i32::&lt;NetworkEndian&gt;()<span class="question-mark">?</span>;
+
+                    <span class="kw">if </span>num_bytes == -<span class="number">1 </span>{
+                        <span class="macro-nonterminal">$T::from_nullable_sql</span>(<span class="prelude-val">None</span>)<span class="question-mark">?
+                    </span>} <span class="kw">else </span>{
+                        <span class="kw">let </span>(elem_bytes, new_bytes) = bytes.split_at(num_bytes <span class="kw">as </span>usize);
+                        bytes = new_bytes;
+                        <span class="macro-nonterminal">$T::from_sql</span>(PgValue::new_internal(
+                            elem_bytes,
+                            <span class="kw-2">&amp;</span>oid,
+                        ))<span class="question-mark">?
+                    </span>}
+                },)+);
+
+                <span class="kw">if </span>bytes.is_empty() {
+                    <span class="prelude-val">Ok</span>(result)
+                } <span class="kw">else </span>{
+                    <span class="prelude-val">Err</span>(<span class="string">&quot;Received too many bytes. This tuple likely contains \
+                        an element of the wrong SQL type.&quot;</span>.into())
+                }
+            }
+        }
+
+        <span class="attribute">#[cfg(feature = <span class="string">&quot;postgres_backend&quot;</span>)]
+        </span><span class="kw">impl</span>&lt;$(<span class="macro-nonterminal">$T</span>,)+ $(<span class="macro-nonterminal">$ST</span>,)+&gt; Queryable&lt;Record&lt;($(<span class="macro-nonterminal">$ST</span>,)+)&gt;, Pg&gt; <span class="kw">for </span>($(<span class="macro-nonterminal">$T</span>,)+)
+        <span class="kw">where </span><span class="self">Self</span>: FromSql&lt;Record&lt;($(<span class="macro-nonterminal">$ST</span>,)+)&gt;, Pg&gt;
+        {
+            <span class="kw">type </span>Row = <span class="self">Self</span>;
+
+            <span class="kw">fn </span>build(row: <span class="self">Self</span>::Row) -&gt; deserialize::Result&lt;<span class="self">Self</span>&gt; {
+                <span class="prelude-val">Ok</span>(row)
+            }
+        }
+
+        <span class="attribute">#[cfg(feature = <span class="string">&quot;postgres_backend&quot;</span>)]
+        </span><span class="kw">impl</span>&lt;$(<span class="macro-nonterminal">$T</span>,)+ $(<span class="macro-nonterminal">$ST</span>,)+&gt; AsExpression&lt;Record&lt;($(<span class="macro-nonterminal">$ST</span>,)+)&gt;&gt; <span class="kw">for </span>($(<span class="macro-nonterminal">$T</span>,)+)
+        <span class="kw">where
+            </span>$(<span class="macro-nonterminal">$ST</span>: SqlType + TypedExpressionType,)+
+            $(<span class="macro-nonterminal">$T</span>: AsExpression&lt;<span class="macro-nonterminal">$ST</span>&gt;,)+
+            PgTuple&lt;($(<span class="macro-nonterminal">$T::Expression</span>,)+)&gt;: Expression&lt;SqlType = Record&lt;($(<span class="macro-nonterminal">$ST</span>,)+)&gt;&gt;,
+        {
+            <span class="kw">type </span>Expression = PgTuple&lt;($(<span class="macro-nonterminal">$T::Expression</span>,)+)&gt;;
+
+            <span class="kw">fn </span>as_expression(<span class="self">self</span>) -&gt; <span class="self">Self</span>::Expression {
+                PgTuple(($(
+                    <span class="self">self</span>.<span class="macro-nonterminal">$idx</span>.as_expression(),
+                )+))
+            }
+        }
+
+        <span class="attribute">#[cfg(feature = <span class="string">&quot;postgres_backend&quot;</span>)]
+        </span><span class="kw">impl</span>&lt;$(<span class="macro-nonterminal">$T</span>,)+ $(<span class="macro-nonterminal">$ST</span>,)+&gt; WriteTuple&lt;($(<span class="macro-nonterminal">$ST</span>,)+)&gt; <span class="kw">for </span>($(<span class="macro-nonterminal">$T</span>,)+)
+        <span class="kw">where
+            </span>$(<span class="macro-nonterminal">$T</span>: ToSql&lt;<span class="macro-nonterminal">$ST</span>, Pg&gt;,)+
+            $(Pg: HasSqlType&lt;<span class="macro-nonterminal">$ST</span>&gt;),+
+        {
+            <span class="kw">fn </span>write_tuple(<span class="kw-2">&amp;</span><span class="self">self</span>, out: <span class="kw-2">&amp;mut </span>Output&lt;<span class="lifetime">&#39;_</span>, <span class="lifetime">&#39;_</span>, Pg&gt;) -&gt; serialize::Result {
+                <span class="kw">let </span><span class="kw-2">mut </span>buffer = Vec::new();
+                out.write_i32::&lt;NetworkEndian&gt;(<span class="macro-nonterminal">$Tuple</span>)<span class="question-mark">?</span>;
+
+                $(
+                    <span class="kw">let </span>oid = &lt;Pg <span class="kw">as </span>HasSqlType&lt;<span class="macro-nonterminal">$ST</span>&gt;&gt;::metadata(out.metadata_lookup()).oid()<span class="question-mark">?</span>;
+                    out.write_u32::&lt;NetworkEndian&gt;(oid)<span class="question-mark">?</span>;
+                    <span class="kw">let </span>is_null = {
+                        <span class="kw">let </span><span class="kw-2">mut </span>temp_buffer = Output::new(ByteWrapper(<span class="kw-2">&amp;mut </span>buffer), out.metadata_lookup());
+                        <span class="kw">let </span>is_null = <span class="self">self</span>.<span class="macro-nonterminal">$idx</span>.to_sql(<span class="kw-2">&amp;mut </span>temp_buffer)<span class="question-mark">?</span>;
+                        is_null
+                    };
+
+                    <span class="kw">if let </span>IsNull::No = is_null {
+                        out.write_i32::&lt;NetworkEndian&gt;(buffer.len() <span class="kw">as </span>i32)<span class="question-mark">?</span>;
+                        out.write_all(<span class="kw-2">&amp;</span>buffer)<span class="question-mark">?</span>;
+                        buffer.clear();
+                    } <span class="kw">else </span>{
+                        out.write_i32::&lt;NetworkEndian&gt;(-<span class="number">1</span>)<span class="question-mark">?</span>;
+                    }
+                )+
+
+                <span class="prelude-val">Ok</span>(IsNull::No)
+            }
+        }
+    )+}
+}
+
+<span class="macro">diesel_derives::__diesel_for_each_tuple!</span>(tuple_impls);
+
+<span class="attribute">#[derive(Debug, Clone, Copy, QueryId, ValidGrouping)]
+</span><span class="kw">pub struct </span>PgTuple&lt;T&gt;(T);
+
+<span class="kw">impl</span>&lt;T&gt; QueryFragment&lt;Pg&gt; <span class="kw">for </span>PgTuple&lt;T&gt;
+<span class="kw">where
+    </span>T: QueryFragment&lt;Pg&gt;,
+{
+    <span class="kw">fn </span>walk_ast&lt;<span class="lifetime">&#39;b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">&#39;b </span><span class="self">self</span>, <span class="kw-2">mut </span>out: AstPass&lt;<span class="lifetime">&#39;_</span>, <span class="lifetime">&#39;b</span>, Pg&gt;) -&gt; QueryResult&lt;()&gt; {
+        out.push_sql(<span class="string">&quot;(&quot;</span>);
+        <span class="self">self</span>.<span class="number">0</span>.walk_ast(out.reborrow())<span class="question-mark">?</span>;
+        out.push_sql(<span class="string">&quot;)&quot;</span>);
+        <span class="prelude-val">Ok</span>(())
+    }
+}
+
+<span class="kw">impl</span>&lt;T&gt; Expression <span class="kw">for </span>PgTuple&lt;T&gt;
+<span class="kw">where
+    </span>T: Expression,
+    T::SqlType: <span class="lifetime">&#39;static</span>,
+{
+    <span class="kw">type </span>SqlType = Record&lt;T::SqlType&gt;;
+}
+
+<span class="kw">impl</span>&lt;T, QS&gt; SelectableExpression&lt;QS&gt; <span class="kw">for </span>PgTuple&lt;T&gt;
+<span class="kw">where
+    </span>T: SelectableExpression&lt;QS&gt;,
+    <span class="self">Self</span>: AppearsOnTable&lt;QS&gt;,
+{
+}
+
+<span class="kw">impl</span>&lt;T, QS&gt; AppearsOnTable&lt;QS&gt; <span class="kw">for </span>PgTuple&lt;T&gt;
+<span class="kw">where
+    </span>T: AppearsOnTable&lt;QS&gt;,
+    <span class="self">Self</span>: Expression,
+{
+}
+
+<span class="attribute">#[cfg(test)]
+</span><span class="kw">mod </span>tests {
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::dsl::sql;
+    <span class="kw">use </span><span class="kw">crate</span>::prelude::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::sql_types::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::test_helpers::<span class="kw-2">*</span>;
+
+    <span class="attribute">#[test]
+    </span><span class="kw">fn </span>record_deserializes_correctly() {
+        <span class="kw">let </span>conn = <span class="kw-2">&amp;mut </span>pg_connection();
+
+        <span class="kw">let </span>tup =
+            sql::&lt;Record&lt;(Integer, Text)&gt;&gt;(<span class="string">&quot;SELECT (1, &#39;hi&#39;)&quot;</span>).get_result::&lt;(i32, String)&gt;(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>((<span class="number">1</span>, String::from(<span class="string">&quot;hi&quot;</span>))), tup);
+
+        <span class="kw">let </span>tup = sql::&lt;Record&lt;(Record&lt;(Integer, Text)&gt;, Integer)&gt;&gt;(<span class="string">&quot;SELECT ((2, &#39;bye&#39;), 3)&quot;</span>)
+            .get_result::&lt;((i32, String), i32)&gt;(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>(((<span class="number">2</span>, String::from(<span class="string">&quot;bye&quot;</span>)), <span class="number">3</span>)), tup);
+
+        <span class="kw">let </span>tup = sql::&lt;
+            Record&lt;(
+                Record&lt;(Nullable&lt;Integer&gt;, Nullable&lt;Text&gt;)&gt;,
+                Nullable&lt;Integer&gt;,
+            )&gt;,
+        &gt;(<span class="string">&quot;SELECT ((4, NULL), NULL)&quot;</span>)
+        .get_result::&lt;((<span class="prelude-ty">Option</span>&lt;i32&gt;, <span class="prelude-ty">Option</span>&lt;String&gt;), <span class="prelude-ty">Option</span>&lt;i32&gt;)&gt;(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>(((<span class="prelude-val">Some</span>(<span class="number">4</span>), <span class="prelude-val">None</span>), <span class="prelude-val">None</span>)), tup);
+    }
+
+    <span class="attribute">#[test]
+    </span><span class="kw">fn </span>record_kinda_sorta_not_really_serializes_correctly() {
+        <span class="kw">let </span>conn = <span class="kw-2">&amp;mut </span>pg_connection();
+
+        <span class="kw">let </span>tup = sql::&lt;Record&lt;(Integer, Text)&gt;&gt;(<span class="string">&quot;(1, &#39;hi&#39;)&quot;</span>);
+        <span class="kw">let </span>res = <span class="kw">crate</span>::select(tup.eq((<span class="number">1</span>, <span class="string">&quot;hi&quot;</span>))).get_result(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>(<span class="bool-val">true</span>), res);
+
+        <span class="kw">let </span>tup = sql::&lt;Record&lt;(Record&lt;(Integer, Text)&gt;, Integer)&gt;&gt;(<span class="string">&quot;((2, &#39;bye&#39;::text), 3)&quot;</span>);
+        <span class="kw">let </span>res = <span class="kw">crate</span>::select(tup.eq(((<span class="number">2</span>, <span class="string">&quot;bye&quot;</span>), <span class="number">3</span>))).get_result(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>(<span class="bool-val">true</span>), res);
+
+        <span class="kw">let </span>tup = sql::&lt;
+            Record&lt;(
+                Record&lt;(Nullable&lt;Integer&gt;, Nullable&lt;Text&gt;)&gt;,
+                Nullable&lt;Integer&gt;,
+            )&gt;,
+        &gt;(<span class="string">&quot;((4, NULL::text), NULL::int4)&quot;</span>);
+        <span class="kw">let </span>res = <span class="kw">crate</span>::select(tup.is_not_distinct_from(((<span class="prelude-val">Some</span>(<span class="number">4</span>), <span class="prelude-val">None</span>::&lt;<span class="kw-2">&amp;</span>str&gt;), <span class="prelude-val">None</span>::&lt;i32&gt;)))
+            .get_result(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>(<span class="bool-val">true</span>), res);
+    }
+
+    <span class="attribute">#[test]
+    </span><span class="kw">fn </span>serializing_named_composite_types() {
+        <span class="attribute">#[derive(SqlType, QueryId, Debug, Clone, Copy)]
+        #[diesel(postgres_type(name = <span class="string">&quot;my_type&quot;</span>))]
+        </span><span class="kw">struct </span>MyType;
+
+        <span class="attribute">#[derive(Debug, AsExpression)]
+        #[diesel(sql_type = MyType)]
+        </span><span class="kw">struct </span>MyStruct&lt;<span class="lifetime">&#39;a</span>&gt;(i32, <span class="kw-2">&amp;</span><span class="lifetime">&#39;a </span>str);
+
+        <span class="kw">impl</span>&lt;<span class="lifetime">&#39;a</span>&gt; ToSql&lt;MyType, Pg&gt; <span class="kw">for </span>MyStruct&lt;<span class="lifetime">&#39;a</span>&gt; {
+            <span class="kw">fn </span>to_sql&lt;<span class="lifetime">&#39;b</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">&#39;b </span><span class="self">self</span>, out: <span class="kw-2">&amp;mut </span>Output&lt;<span class="lifetime">&#39;b</span>, <span class="lifetime">&#39;_</span>, Pg&gt;) -&gt; serialize::Result {
+                WriteTuple::&lt;(Integer, Text)&gt;::write_tuple(<span class="kw-2">&amp;</span>(<span class="self">self</span>.<span class="number">0</span>, <span class="self">self</span>.<span class="number">1</span>), out)
+            }
+        }
+
+        <span class="kw">let </span>conn = <span class="kw-2">&amp;mut </span>pg_connection();
+
+        <span class="kw">crate</span>::sql_query(<span class="string">&quot;CREATE TYPE my_type AS (i int4, t text)&quot;</span>)
+            .execute(conn)
+            .unwrap();
+        <span class="kw">let </span>sql = sql::&lt;Bool&gt;(<span class="string">&quot;(1, &#39;hi&#39;)::my_type = &quot;</span>).bind::&lt;MyType, <span class="kw">_</span>&gt;(MyStruct(<span class="number">1</span>, <span class="string">&quot;hi&quot;</span>));
+        <span class="kw">let </span>res = <span class="kw">crate</span>::select(sql).get_result(conn);
+        <span class="macro">assert_eq!</span>(<span class="prelude-val">Ok</span>(<span class="bool-val">true</span>), res);
+    }
+}
+</code></pre></div>
+</section></div></main><div id="rustdoc-vars" data-root-path="../../../../" data-current-crate="diesel" data-themes="ayu,dark,light" data-resource-suffix="" data-rustdoc-version="1.65.0-nightly (ce36e8825 2022-08-28)" ></div></body></html>

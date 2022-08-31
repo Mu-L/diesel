@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":[["ConcatWithPipesClause","Indicates that this backend uses the `||` operator to select a concatenation of two variables or strings"]]};
