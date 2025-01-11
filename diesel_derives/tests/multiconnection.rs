@@ -1,4 +1,5 @@
 use crate::schema::users;
+use diesel::connection::Instrumentation;
 use diesel::prelude::*;
 
 #[derive(diesel::MultiConnection)]
@@ -11,7 +12,7 @@ pub enum InferConnection {
     Mysql(MysqlConnection),
 }
 
-#[derive(Queryable, Selectable)]
+#[derive(Queryable, Selectable, Insertable, AsChangeset)]
 pub struct User {
     pub id: i32,
     pub name: String,
@@ -20,6 +21,10 @@ pub struct User {
 #[test]
 fn check_queries_work() {
     let mut conn = establish_connection();
+
+    // checks that this trait is implemented
+    conn.set_instrumentation(None::<Box<dyn Instrumentation>>);
+    let _ = conn.instrumentation();
 
     diesel::sql_query(
         "CREATE TEMPORARY TABLE users(\
@@ -88,9 +93,23 @@ fn check_queries_work() {
         .values((users::id.eq(42), users::name.eq("John")))
         .execute(&mut conn)
         .unwrap();
+    diesel::insert_into(users::table)
+        .values(User {
+            id: 43,
+            name: "Jane".into(),
+        })
+        .execute(&mut conn)
+        .unwrap();
     // update
     diesel::update(users::table)
         .set(users::name.eq("John"))
+        .execute(&mut conn)
+        .unwrap();
+    diesel::update(users::table.find(42))
+        .set(User {
+            id: 42,
+            name: "Jane".into(),
+        })
         .execute(&mut conn)
         .unwrap();
 

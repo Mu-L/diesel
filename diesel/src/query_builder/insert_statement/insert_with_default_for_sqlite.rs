@@ -1,5 +1,4 @@
 use super::{BatchInsert, InsertStatement};
-use crate::connection::Connection;
 use crate::insertable::InsertValues;
 use crate::insertable::{CanInsertInSingleQuery, ColumnInsertValue, DefaultableColumnInsertValue};
 use crate::prelude::*;
@@ -7,7 +6,6 @@ use crate::query_builder::{AstPass, QueryId, ValuesClause};
 use crate::query_builder::{DebugQuery, QueryFragment};
 use crate::query_dsl::methods::ExecuteDsl;
 use crate::sqlite::Sqlite;
-use crate::{QueryResult, Table};
 use std::fmt::{self, Debug, Display};
 
 pub trait DebugQueryHelper<ContainsDefaultableValue> {
@@ -15,9 +13,9 @@ pub trait DebugQueryHelper<ContainsDefaultableValue> {
     fn fmt_display(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result;
 }
 
-impl<'a, T, V, QId, Op, Ret, const STATIC_QUERY_ID: bool> DebugQueryHelper<Yes>
+impl<T, V, QId, Op, Ret, const STATIC_QUERY_ID: bool> DebugQueryHelper<Yes>
     for DebugQuery<
-        'a,
+        '_,
         InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op, Ret>,
         Sqlite,
     >
@@ -110,9 +108,9 @@ where
     }
 }
 
-impl<'a, T, V, QId, Op, O, const STATIC_QUERY_ID: bool> Display
+impl<T, V, QId, Op, O, const STATIC_QUERY_ID: bool> Display
     for DebugQuery<
-        'a,
+        '_,
         InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op>,
         Sqlite,
     >
@@ -126,9 +124,9 @@ where
     }
 }
 
-impl<'a, T, V, QId, Op, O, const STATIC_QUERY_ID: bool> Debug
+impl<T, V, QId, Op, O, const STATIC_QUERY_ID: bool> Debug
     for DebugQuery<
-        'a,
+        '_,
         InsertStatement<T, BatchInsert<Vec<ValuesClause<V, T>>, T, QId, STATIC_QUERY_ID>, Op>,
         Sqlite,
     >
@@ -206,7 +204,7 @@ where
     type Out = I::Out;
 }
 
-impl<'a, T> ContainsDefaultableValue for &'a T
+impl<T> ContainsDefaultableValue for &T
 where
     T: ContainsDefaultableValue,
 {
@@ -237,7 +235,7 @@ where
     T: Table + Copy + QueryId + 'static,
     T::FromClause: QueryFragment<Sqlite>,
     Op: Copy + QueryId + QueryFragment<Sqlite>,
-    V: InsertValues<T, Sqlite> + CanInsertInSingleQuery<Sqlite> + QueryId,
+    V: InsertValues<Sqlite, T> + CanInsertInSingleQuery<Sqlite> + QueryId,
 {
     fn execute((Yes, query): Self, conn: &mut C) -> QueryResult<usize> {
         conn.transaction(|conn| {

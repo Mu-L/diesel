@@ -32,6 +32,8 @@ pub struct AttributeSpanWrapper<T> {
 
 pub enum FieldAttr {
     Embed(Ident),
+    SkipInsertion(Ident),
+    SkipUpdate(Ident),
 
     ColumnName(Ident, SqlIdentifier),
     SqlType(Ident, TypePath),
@@ -55,9 +57,21 @@ impl SqlIdentifier {
         self.span
     }
 
-    pub fn valid_ident(&self) -> Result<()> {
-        if syn::parse_str::<Ident>(&self.field_name).is_err() {
-            Err(syn::Error::new(
+    pub fn to_ident(&self) -> Result<Ident> {
+        match syn::parse_str::<Ident>(&format!("r#{}", self.field_name)) {
+            Ok(mut ident) => {
+                ident.set_span(self.span);
+                Ok(ident)
+            }
+            Err(_e) if self.field_name.contains(' ') => Err(syn::Error::new(
+                self.span(),
+                format!(
+                    "Expected valid identifier, found `{0}`. \
+                 Diesel does not support column names with whitespaces yet",
+                    self.field_name
+                ),
+            )),
+            Err(_e) => Err(syn::Error::new(
                 self.span(),
                 format!(
                     "Expected valid identifier, found `{0}`. \
@@ -65,22 +79,28 @@ impl SqlIdentifier {
                  perhaps you meant to write `{0}_`?",
                     self.field_name
                 ),
-            ))
-        } else {
-            Ok(())
+            )),
         }
     }
 }
 
 impl ToTokens for SqlIdentifier {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        Ident::new(&self.field_name, self.span).to_tokens(tokens)
+        if self.field_name.starts_with("r#") {
+            Ident::new_raw(&self.field_name[2..], self.span).to_tokens(tokens)
+        } else {
+            Ident::new(&self.field_name, self.span).to_tokens(tokens)
+        }
     }
 }
 
 impl Display for SqlIdentifier {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.field_name)
+        let mut start = 0;
+        if self.field_name.starts_with("r#") {
+            start = 2;
+        }
+        f.write_str(&self.field_name[start..])
     }
 }
 
@@ -92,6 +112,8 @@ impl PartialEq<Ident> for SqlIdentifier {
 
 impl From<&'_ Ident> for SqlIdentifier {
     fn from(ident: &'_ Ident) -> Self {
+        use syn::ext::IdentExt;
+        let ident = ident.unraw();
         Self {
             span: ident.span(),
             field_name: ident.to_string(),
@@ -123,6 +145,8 @@ impl Parse for FieldAttr {
 
         match &*name_str {
             "embed" => Ok(FieldAttr::Embed(name)),
+            "skip_insertion" => Ok(FieldAttr::SkipInsertion(name)),
+            "skip_update" => Ok(FieldAttr::SkipUpdate(name)),
 
             "column_name" => Ok(FieldAttr::ColumnName(
                 name,
@@ -157,8 +181,11 @@ impl Parse for FieldAttr {
                 &name,
                 &[
                     "embed",
+                    "skip_insertion",
                     "column_name",
                     "sql_type",
+                    "treat_none_as_default_value",
+                    "treat_none_as_null",
                     "serialize_as",
                     "deserialize_as",
                     "select_expression",
@@ -173,6 +200,8 @@ impl MySpanned for FieldAttr {
     fn span(&self) -> Span {
         match self {
             FieldAttr::Embed(ident)
+            | FieldAttr::SkipInsertion(ident)
+            | FieldAttr::SkipUpdate(ident)
             | FieldAttr::ColumnName(ident, _)
             | FieldAttr::SqlType(ident, _)
             | FieldAttr::TreatNoneAsNull(ident, _)

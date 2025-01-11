@@ -418,12 +418,9 @@ pub use diesel_derives::QueryableByName;
 ///     }
 /// }
 /// ```
-#[cfg_attr(
-    feature = "nightly-error-messages",
-    diagnostic::on_unimplemented(
-        message = "Cannot deserialize a value of the database type `{A}` as `{Self}`",
-        note = "Double check your type mappings via the documentation of `{A}`"
-    )
+#[diagnostic::on_unimplemented(
+    message = "cannot deserialize a value of the database type `{A}` as `{Self}`",
+    note = "double check your type mappings via the documentation of `{A}`"
 )]
 pub trait FromSql<A, DB: Backend>: Sized {
     /// See the trait documentation.
@@ -451,12 +448,10 @@ pub trait FromSql<A, DB: Backend>: Sized {
 /// that implement one of the following traits:
 ///    * [`Queryable`]
 ///    * [`QueryableByName`]
-#[cfg_attr(
-    feature = "nightly-error-messages",
-    diagnostic::on_unimplemented(
-        note = "`diesel::sql_query` requires the loading target to column names for loading values.\n\
-                 You need to provide a type that explicitly derives `diesel::deserialize::QueryableByName`",
-    )
+#[diagnostic::on_unimplemented(
+    note = "double check your type mappings via the documentation of `{ST}`",
+    note = "`diesel::sql_query` requires the loading target to column names for loading values.\n\
+             You need to provide a type that explicitly derives `diesel::deserialize::QueryableByName`"
 )]
 pub trait FromSqlRow<ST, DB: Backend>: Sized {
     /// See the trait documentation.
@@ -545,7 +540,13 @@ where
         use crate::row::Field;
 
         let field = row.get(0).ok_or(crate::result::UnexpectedEndOfRow)?;
-        T::from_nullable_sql(field.value())
+        T::from_nullable_sql(field.value()).map_err(|e| {
+            if e.is::<crate::result::UnexpectedNullError>() {
+                e
+            } else {
+                Box::new(crate::result::DeserializeFieldError::new(field, e))
+            }
+        })
     }
 }
 
@@ -577,3 +578,26 @@ where
 {
     const FIELD_COUNT: usize = <ST as crate::util::TupleSize>::SIZE;
 }
+
+/// A helper trait for giving a type a useful default value.
+///
+/// This is needed for types that can be used as range to represent the empty range as
+/// (Bound::Excluded(DEFAULT), Bound::Excluded(DEFAULT)).
+/// When possible, implementations of this trait should fall back to using std::default::Default.
+#[allow(dead_code)]
+pub(crate) trait Defaultable {
+    /// Returns the "default value" for a type.
+    fn default_value() -> Self;
+}
+
+// We cannot have this impl because rustc
+// then complains in third party crates that
+// diesel may implement `Default`in the future.
+// If we get negative trait impls at some point in time
+// it should be possible to make this work.
+//// Defaultable for types that has Default
+//impl<T: Default> Defaultable for T {
+//    fn default_value() -> Self {
+//        T::default()
+//    }
+//}

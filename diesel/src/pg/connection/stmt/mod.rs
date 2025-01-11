@@ -6,6 +6,7 @@ use std::os::raw as libc;
 use std::ptr;
 
 use super::result::PgResult;
+use super::statement_cache::PrepareForCache;
 use crate::pg::PgTypeMetadata;
 use crate::result::QueryResult;
 
@@ -33,12 +34,17 @@ impl Statement {
             .collect::<Vec<_>>();
         let param_lengths = param_data
             .iter()
-            .map(|data| data.as_ref().map(|d| d.len() as libc::c_int).unwrap_or(0))
-            .collect::<Vec<_>>();
+            .map(|data| data.as_ref().map(|d| d.len().try_into()).unwrap_or(Ok(0)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
+        let param_count: libc::c_int = params_pointer
+            .len()
+            .try_into()
+            .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
         unsafe {
             raw_connection.send_query_prepared(
                 self.name.as_ptr(),
-                params_pointer.len() as libc::c_int,
+                param_count,
                 params_pointer.as_ptr(),
                 param_lengths.as_ptr(),
                 self.param_formats.as_ptr(),
@@ -54,9 +60,14 @@ impl Statement {
     pub(super) fn prepare(
         raw_connection: &mut RawConnection,
         sql: &str,
-        name: Option<&str>,
+        is_cached: PrepareForCache,
         param_types: &[PgTypeMetadata],
     ) -> QueryResult<Self> {
+        let query_name = match is_cached {
+            PrepareForCache::Yes { counter } => Some(format!("__diesel_stmt_{counter}")),
+            PrepareForCache::No => None,
+        };
+        let name = query_name.as_deref();
         let name = CString::new(name.unwrap_or(""))?;
         let sql = CString::new(sql)?;
         let param_types_vec = param_types
@@ -66,10 +77,14 @@ impl Statement {
             .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
 
         let internal_result = unsafe {
+            let param_count: libc::c_int = param_types
+                .len()
+                .try_into()
+                .map_err(|e| crate::result::Error::SerializationError(Box::new(e)))?;
             raw_connection.prepare(
                 name.as_ptr(),
                 sql.as_ptr(),
-                param_types.len() as libc::c_int,
+                param_count,
                 param_types_to_ptr(Some(&param_types_vec)),
             )
         };

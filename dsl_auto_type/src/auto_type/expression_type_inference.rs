@@ -2,9 +2,10 @@ use super::*;
 
 pub use super::settings_builder::InferrerSettingsBuilder;
 
-/// This is meant to be used if there's need to infer a single expression type out of the context
-/// of a function. It will be assumed that there are no intermediate variables (`let` statements).
-/// Consequently, this form prevents usage of `let` statements for annotating types.
+/// This is meant to be used if there's need to infer a single expression type
+/// out of the context of a function. It will be assumed that there are no
+/// intermediate variables (`let` statements). initially, but one can still use
+/// intermediate block expression to annotate types.
 ///
 /// This is useful in the context of Diesel's `Selectable` macro.
 pub fn infer_expression_type(
@@ -14,7 +15,10 @@ pub fn infer_expression_type(
 ) -> (syn::Type, Vec<syn::Error>) {
     let local_variables_map = LocalVariablesMap {
         inferrer_settings,
-        map: Default::default(),
+        inner: LocalVariablesMapInner {
+            map: Default::default(),
+            parent: None,
+        },
     };
     let inferrer = local_variables_map.inferrer();
     let type_ = inferrer.infer_expression_type(expr, type_hint);
@@ -40,7 +44,7 @@ pub struct InferrerSettings {
     pub(crate) function_types_case: Case,
 }
 
-impl<'a> LocalVariablesMap<'a> {
+impl<'a> LocalVariablesMap<'a, '_> {
     pub(crate) fn inferrer(&'a self) -> TypeInferrer<'a> {
         TypeInferrer {
             local_variables_map: self,
@@ -50,7 +54,7 @@ impl<'a> LocalVariablesMap<'a> {
 }
 
 pub(crate) struct TypeInferrer<'s> {
-    local_variables_map: &'s LocalVariablesMap<'s>,
+    local_variables_map: &'s LocalVariablesMap<'s, 's>,
     errors: std::cell::RefCell<Vec<Rc<syn::Error>>>,
 }
 
@@ -69,10 +73,12 @@ impl TypeInferrer<'_> {
             Err(e) => self.register_error(e, expr.span()),
         }
     }
+
     fn register_error(&self, error: syn::Error, infer_type_span: Span) -> syn::Type {
         self.errors.borrow_mut().push(Rc::new(error));
         parse_quote_spanned!(infer_type_span=> _)
     }
+
     fn try_infer_expression_type(
         &self,
         expr: &syn::Expr,
@@ -82,6 +88,12 @@ impl TypeInferrer<'_> {
             expr,
             type_hint.filter(|h| !matches!(h, syn::Type::Infer(_))),
         ) {
+            (syn::Expr::Group(syn::ExprGroup { expr, .. }), type_hint) => {
+                return self.try_infer_expression_type(expr, type_hint)
+            }
+            (syn::Expr::Paren(syn::ExprParen { expr, .. }), type_hint) => {
+                return self.try_infer_expression_type(expr, type_hint)
+            }
             (
                 syn::Expr::Tuple(syn::ExprTuple {
                     elems: expr_elems, ..
@@ -121,11 +133,11 @@ impl TypeInferrer<'_> {
                 // This is either a local variable or we should assume that the type exists at
                 // the same path as the function (with applied casing for last segment)
                 let path_is_ident = path.get_ident();
-                if path_is_ident.map_or(false, |ident| ident == "self") {
+                if path_is_ident.is_some_and(|ident| ident == "self") {
                     parse_quote!(Self)
                 } else if let Some(LetStatementInferredType { type_, errors }) = path_is_ident
                     .and_then(|path_single_ident| {
-                        self.local_variables_map.map.get(path_single_ident)
+                        self.local_variables_map.inner.get(path_single_ident)
                     })
                 {
                     // Since we are using this type for the computation of the current type, any
@@ -140,8 +152,12 @@ impl TypeInferrer<'_> {
                 }
             }
             (syn::Expr::Call(syn::ExprCall { func, args, .. }), None) => {
-                let unsupported_function_type =
-                    || syn::Error::new_spanned(&**func, "unsupported function type for auto_type");
+                let unsupported_function_type = || {
+                    syn::Error::new_spanned(
+                        &**func,
+                        "unsupported function type for auto_type, please provide a type hint",
+                    )
+                };
                 let func_type = self.try_infer_expression_type(func, None)?;
                 // First we extract the type of the function
                 let mut type_path = match func_type {
@@ -232,14 +248,112 @@ impl TypeInferrer<'_> {
                 _ => {
                     return Err(syn::Error::new(
                         lit.span(),
-                        "unsupported literal for auto_type",
+                        "unsupported literal for auto_type, please provide a type hint",
                     ))
                 }
             },
+            (syn::Expr::Block(syn::ExprBlock { block, .. }), type_hint) => {
+                match block.stmts.last() {
+                    None
+                    | Some(
+                        syn::Stmt::Local(_) | syn::Stmt::Item(_) | syn::Stmt::Expr(_, Some(_)),
+                    ) => {
+                        // Empty blocks, local variables (`let`) and other item definition as last
+                        // statement, as well as expressions BUT with a semicolon, lead to the
+                        // block having unit type.
+                        match type_hint {
+                            Some(type_hint) => {
+                                // Prefer user-specified type hint to our own inference
+                                type_hint.clone()
+                            }
+                            None => parse_quote_spanned!(block.span()=> ()),
+                        }
+                    }
+                    Some(syn::Stmt::Expr(expr, None)) => {
+                        let local_variables_map = LocalVariablesMap {
+                            inferrer_settings: self.local_variables_map.inferrer_settings,
+                            inner: LocalVariablesMapInner {
+                                map: Default::default(),
+                                parent: Some(&self.local_variables_map.inner),
+                            },
+                        };
+                        local_variables_map.infer_block_expression_type(
+                            expr,
+                            type_hint,
+                            block,
+                            &mut self.errors.borrow_mut(),
+                        )
+                    }
+                    Some(syn::Stmt::Macro(syn::StmtMacro { mac, .. })) => {
+                        match type_hint {
+                            Some(type_hint) => {
+                                // User provided a type hint to the macro expression, we won't be
+                                // able to do any better than this
+                                type_hint.clone()
+                            }
+                            None => {
+                                return Err(syn::Error::new_spanned(
+                                    mac,
+                                    "auto_type: unsupported macro call as last statement in block, \
+                                        please provide a type hint",
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            (syn::Expr::Binary(binary_expression), None) => {
+                let op_span = Span::mixed_site().located_at(binary_expression.op.span());
+                let trait_name = match binary_expression.op {
+                    syn::BinOp::Add(_) => "Add",
+                    syn::BinOp::Sub(_) => "Sub",
+                    syn::BinOp::Mul(_) => "Mul",
+                    syn::BinOp::Div(_) => "Div",
+                    syn::BinOp::Rem(_) => "Rem",
+                    syn::BinOp::BitXor(_) => "BitXor",
+                    syn::BinOp::BitAnd(_) => "BitAnd",
+                    syn::BinOp::BitOr(_) => "BitOr",
+                    syn::BinOp::Shl(_) => "Shl",
+                    syn::BinOp::Shr(_) => "Shr",
+                    syn::BinOp::And(_)
+                    | syn::BinOp::Or(_)
+                    | syn::BinOp::Eq(_)
+                    | syn::BinOp::Lt(_)
+                    | syn::BinOp::Le(_)
+                    | syn::BinOp::Ne(_)
+                    | syn::BinOp::Ge(_)
+                    | syn::BinOp::Gt(_) => return Ok(parse_quote!(bool)),
+                    syn::BinOp::AddAssign(_)
+                    | syn::BinOp::SubAssign(_)
+                    | syn::BinOp::MulAssign(_)
+                    | syn::BinOp::DivAssign(_)
+                    | syn::BinOp::RemAssign(_)
+                    | syn::BinOp::BitXorAssign(_)
+                    | syn::BinOp::BitAndAssign(_)
+                    | syn::BinOp::BitOrAssign(_)
+                    | syn::BinOp::ShlAssign(_)
+                    | syn::BinOp::ShrAssign(_) => return Ok(parse_quote!(())),
+                    _ => {
+                        // This is here because the `BinOp` enum is marked as #[non_exhaustive],
+                        // but in effect we really support all the variants
+                        return Err(syn::Error::new(
+                            op_span,
+                            format_args!(
+                                "unsupported binary operator for auto_type: {:?}",
+                                binary_expression.op
+                            ),
+                        ));
+                    }
+                };
+                let trait_name_ident = syn::Ident::new(trait_name, op_span);
+                let left_type = self.infer_expression_type(&binary_expression.left, None);
+                let right_type = self.infer_expression_type(&binary_expression.right, None);
+                parse_quote!(<#left_type as ::core::ops::#trait_name_ident<#right_type>>::Output)
+            }
             (_, None) => {
                 return Err(syn::Error::new(
                     expr.span(),
-                    "unsupported expression for auto_type",
+                    "unsupported expression for auto_type, please provide a type hint",
                 ))
             }
             (_, Some(type_hint)) => type_hint.clone(),

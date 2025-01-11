@@ -1,13 +1,12 @@
 use std::marker::PhantomData;
 
-use crate::backend::{sql_dialect, Backend, DieselReserveSpecialization};
+use crate::backend::{sql_dialect, DieselReserveSpecialization};
 use crate::dsl::AsExprOf;
 use crate::expression::subselect::ValidSubselect;
 use crate::expression::*;
 use crate::insertable::Insertable;
 use crate::query_builder::combination_clause::*;
 use crate::query_builder::distinct_clause::DistinctClause;
-use crate::query_builder::from_clause::FromClause;
 use crate::query_builder::group_by_clause::ValidGroupByClause;
 use crate::query_builder::having_clause::HavingClause;
 use crate::query_builder::insert_statement::InsertFromSelect;
@@ -21,7 +20,6 @@ use crate::query_dsl::methods::*;
 use crate::query_dsl::*;
 use crate::query_source::joins::*;
 use crate::query_source::{QuerySource, Table};
-use crate::result::QueryResult;
 use crate::sql_types::{BigInt, BoolOrNullableBool, IntoNullable};
 
 // This is used by the table macro internally
@@ -183,26 +181,26 @@ impl<'a, ST, QS, DB, GB> BoxedQueryHelper<'a, QS, DB> for BoxedSelectStatement<'
     }
 }
 
-impl<'a, ST, QS, DB, GB> Query for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> Query for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     DB: Backend,
 {
     type SqlType = ST;
 }
 
-impl<'a, ST, QS, DB, GB> SelectQuery for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> SelectQuery for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     DB: Backend,
 {
     type SqlType = ST;
 }
 
-impl<'a, ST, QS, QS2, DB, GB> ValidSubselect<QS2> for BoxedSelectStatement<'a, ST, QS, DB, GB> where
+impl<ST, QS, QS2, DB, GB> ValidSubselect<QS2> for BoxedSelectStatement<'_, ST, QS, DB, GB> where
     Self: Query<SqlType = ST>
 {
 }
 
-impl<'a, ST, QS, DB, GB> QueryFragment<DB> for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> QueryFragment<DB> for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     DB: Backend,
     Self: QueryFragment<DB, DB::SelectStatementSyntax>,
@@ -227,7 +225,7 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB> QueryId for BoxedSelectStatement<'a, ST, QS, DB, GB> {
+impl<ST, QS, DB, GB> QueryId for BoxedSelectStatement<'_, ST, QS, DB, GB> {
     type QueryId = ();
 
     const HAS_STATIC_QUERY_ID: bool = false;
@@ -258,7 +256,7 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB> DistinctDsl for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> DistinctDsl for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     DB: Backend,
     DistinctClause: QueryFragment<DB>,
@@ -381,7 +379,7 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB> LimitDsl for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> LimitDsl for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     DB: Backend,
     LimitClause<AsExprOf<i64, BigInt>>: QueryFragment<DB>,
@@ -394,7 +392,7 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB> OffsetDsl for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> OffsetDsl for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     DB: Backend,
     OffsetClause<AsExprOf<i64, BigInt>>: QueryFragment<DB>,
@@ -441,7 +439,7 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, Rhs> JoinTo<Rhs> for BoxedSelectStatement<'a, ST, FromClause<QS>, DB, ()>
+impl<ST, QS, DB, Rhs> JoinTo<Rhs> for BoxedSelectStatement<'_, ST, FromClause<QS>, DB, ()>
 where
     QS: JoinTo<Rhs> + QuerySource,
 {
@@ -453,11 +451,11 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB> QueryDsl for BoxedSelectStatement<'a, ST, QS, DB, GB> {}
+impl<ST, QS, DB, GB> QueryDsl for BoxedSelectStatement<'_, ST, QS, DB, GB> {}
 
-impl<'a, ST, QS, DB, Conn, GB> RunQueryDsl<Conn> for BoxedSelectStatement<'a, ST, QS, DB, GB> {}
+impl<ST, QS, DB, Conn, GB> RunQueryDsl<Conn> for BoxedSelectStatement<'_, ST, QS, DB, GB> {}
 
-impl<'a, ST, QS, DB, T, GB> Insertable<T> for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, T, GB> Insertable<T> for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     T: Table,
     Self: Query,
@@ -471,7 +469,7 @@ where
     }
 }
 
-impl<'a, 'b, ST, QS, DB, T, GB> Insertable<T> for &'b BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, T, GB> Insertable<T> for &BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     T: Table,
     Self: Query,
@@ -507,8 +505,9 @@ where
 }
 
 impl<'a, ST, QS, DB, GB, Predicate> HavingDsl<Predicate>
-    for BoxedSelectStatement<'a, ST, QS, DB, GB>
+    for BoxedSelectStatement<'a, ST, FromClause<QS>, DB, GB>
 where
+    QS: QuerySource,
     DB: Backend,
     GB: Expression,
     HavingClause<Predicate>: QueryFragment<DB> + Send + 'a,
@@ -523,7 +522,7 @@ where
     }
 }
 
-impl<'a, ST, QS, DB, GB> CombineDsl for BoxedSelectStatement<'a, ST, QS, DB, GB>
+impl<ST, QS, DB, GB> CombineDsl for BoxedSelectStatement<'_, ST, QS, DB, GB>
 where
     Self: Query,
 {
@@ -599,7 +598,7 @@ mod tests {
         };};
     }
 
-    #[test]
+    #[diesel_test_helper::test]
     fn boxed_is_send() {
         #[cfg(feature = "postgres")]
         assert_boxed_query_send!(crate::pg::Pg);

@@ -1,4 +1,3 @@
-use std::convert::TryInto;
 use std::io::prelude::*;
 
 use crate::deserialize::{self, FromSql};
@@ -37,7 +36,8 @@ impl ToSql<MacAddr, Pg> for [u8; 6] {
     }
 }
 
-#[test]
+#[cfg(test)]
+#[diesel_test_helper::test]
 fn macaddr_roundtrip() {
     use crate::query_builder::bind_collector::ByteWrapper;
 

@@ -11,6 +11,7 @@ mod clause_macro;
 
 pub(crate) mod ast_pass;
 pub mod bind_collector;
+mod collected_query;
 pub(crate) mod combination_clause;
 mod debug_query;
 mod delete_statement;
@@ -37,7 +38,9 @@ pub(crate) mod where_clause;
 #[doc(inline)]
 pub use self::ast_pass::AstPass;
 #[doc(inline)]
-pub use self::bind_collector::BindCollector;
+pub use self::bind_collector::{BindCollector, MoveableBindCollector};
+#[doc(inline)]
+pub use self::collected_query::CollectedQuery;
 #[doc(inline)]
 pub use self::debug_query::DebugQuery;
 #[doc(inline)]
@@ -62,11 +65,17 @@ pub use self::update_statement::target::{IntoUpdateTarget, UpdateTarget};
 pub use self::update_statement::{BoxedUpdateStatement, UpdateStatement};
 
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
+pub use self::combination_clause::{
+    All, Distinct, Except, Intersect, ParenthesisWrapper, SupportsCombinationClause, Union,
+};
+#[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::limit_clause::{LimitClause, NoLimitClause};
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::limit_offset_clause::{BoxedLimitOffsetClause, LimitOffsetClause};
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::offset_clause::{NoOffsetClause, OffsetClause};
+#[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
+pub use self::order_clause::{NoOrderClause, OrderClause};
 
 #[diesel_derives::__diesel_public_if(
     feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
@@ -80,7 +89,7 @@ pub(crate) use self::insert_statement::{UndecoratedInsertRecord, ValuesClause};
 
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 #[doc(inline)]
-pub use self::insert_statement::DefaultValues;
+pub use self::insert_statement::{DefaultValues, InsertOrIgnore, Replace};
 
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 #[doc(inline)]
@@ -120,6 +129,11 @@ pub(crate) use self::insert_statement::ColumnList;
 #[cfg(feature = "postgres_backend")]
 pub use crate::pg::query_builder::only::Only;
 
+#[cfg(feature = "postgres_backend")]
+pub use crate::pg::query_builder::tablesample::{Tablesample, TablesampleMethod};
+
+#[cfg(feature = "postgres_backend")]
+pub(crate) use self::bind_collector::ByteWrapper;
 use crate::backend::Backend;
 use crate::result::QueryResult;
 use std::error::Error;
@@ -176,7 +190,7 @@ pub trait Query {
     type SqlType;
 }
 
-impl<'a, T: Query> Query for &'a T {
+impl<T: Query> Query for &T {
     type SqlType = T::SqlType;
 }
 
@@ -202,6 +216,11 @@ pub trait SelectQuery {
 ///
 /// [`ExecuteDsl`]: crate::query_dsl::methods::ExecuteDsl
 /// [`LoadQuery`]: crate::query_dsl::methods::LoadQuery
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is no valid SQL fragment for the `{DB}` backend",
+    note = "this usually means that the `{DB}` database system does not support \n\
+            this SQL syntax"
+)]
 pub trait QueryFragment<DB: Backend, SP = self::private::NotSpecialized> {
     /// Walk over this `QueryFragment` for all passes.
     ///
@@ -285,7 +304,7 @@ where
     }
 }
 
-impl<'a, T: ?Sized, DB> QueryFragment<DB> for &'a T
+impl<T: ?Sized, DB> QueryFragment<DB> for &T
 where
     DB: Backend,
     T: QueryFragment<DB>,

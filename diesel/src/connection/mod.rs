@@ -1,5 +1,6 @@
 //! Types related to database connections
 
+pub(crate) mod instrumentation;
 #[cfg(all(
     not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
     any(feature = "sqlite", feature = "postgres", feature = "mysql")
@@ -13,8 +14,15 @@ use crate::backend::Backend;
 use crate::expression::QueryMetadata;
 use crate::query_builder::{Query, QueryFragment, QueryId};
 use crate::result::*;
+use crate::sql_types::TypeMetadata;
 use std::fmt::Debug;
 
+#[doc(inline)]
+pub use self::instrumentation::{
+    get_default_instrumentation, set_default_instrumentation, DebugQuery, Instrumentation,
+    InstrumentationEvent,
+};
+#[doc(inline)]
 pub use self::transaction_manager::{
     AnsiTransactionManager, InTransactionStatus, TransactionDepthChange, TransactionManager,
     TransactionManagerStatus, ValidTransactionManagerStatus,
@@ -28,11 +36,24 @@ pub(crate) use self::private::ConnectionSealed;
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
 pub use self::private::MultiConnectionHelper;
 
+#[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
+pub use self::instrumentation::{DynInstrumentation, StrQueryHelper};
+
 #[cfg(all(
     not(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"),
     any(feature = "sqlite", feature = "postgres", feature = "mysql")
 ))]
 pub(crate) use self::private::MultiConnectionHelper;
+
+/// Set cache size for a connection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CacheSize {
+    /// Caches all queries if possible
+    Unbounded,
+    /// Disable statement cache
+    Disabled,
+}
 
 /// Perform simple operations on a backend.
 ///
@@ -381,6 +402,18 @@ where
     fn transaction_state(
         &mut self,
     ) -> &mut <Self::TransactionManager as TransactionManager<Self>>::TransactionStateData;
+
+    /// Get the instrumentation instance stored in this connection
+    #[diesel_derives::__diesel_public_if(
+        feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+    )]
+    fn instrumentation(&mut self) -> &mut dyn Instrumentation;
+
+    /// Set a specific [`Instrumentation`] implementation for this connection
+    fn set_instrumentation(&mut self, instrumentation: impl Instrumentation);
+
+    /// Set the prepared statement cache size to [`CacheSize`] for this connection
+    fn set_prepared_statement_cache_size(&mut self, size: CacheSize);
 }
 
 /// The specific part of a [`Connection`] which actually loads data from the database
@@ -423,6 +456,15 @@ pub trait LoadConnection<B = DefaultLoadingMode>: Connection {
     where
         T: Query + QueryFragment<Self::Backend> + QueryId + 'query,
         Self::Backend: QueryMetadata<T::SqlType>;
+}
+
+/// Describes a connection with an underlying [`crate::sql_types::TypeMetadata::MetadataLookup`]
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+pub trait WithMetadataLookup: Connection {
+    /// Retrieves the underlying metadata lookup
+    fn metadata_lookup(&mut self) -> &mut <Self::Backend as TypeMetadata>::MetadataLookup;
 }
 
 /// A variant of the [`Connection`](trait.Connection.html) trait that is
@@ -521,7 +563,7 @@ pub(crate) mod private {
 
     /// This trait restricts who can implement `Connection`
     #[cfg_attr(
-        doc_cfg,
+        docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait ConnectionSealed {}
@@ -530,7 +572,7 @@ pub(crate) mod private {
     /// to/from an `std::any::Any` reference. This is used internally by the `#[derive(MultiConnection)]`
     /// implementation
     #[cfg_attr(
-        doc_cfg,
+        docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait MultiConnectionHelper: super::Connection {
@@ -559,6 +601,9 @@ pub(crate) mod private {
     where
         T: super::LoadConnection<B>,
     {
-        type Cursor<'conn, 'query> = <T as super::LoadConnection<B>>::Cursor<'conn, 'query> where T: 'conn;
+        type Cursor<'conn, 'query>
+            = <T as super::LoadConnection<B>>::Cursor<'conn, 'query>
+        where
+            T: 'conn;
     }
 }

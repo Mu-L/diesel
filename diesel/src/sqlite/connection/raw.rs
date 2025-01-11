@@ -1,5 +1,9 @@
 #![allow(unsafe_code)] // ffi calls
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 extern crate libsqlite3_sys as ffi;
+
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+use sqlite_wasm_rs::export as ffi;
 
 use std::ffi::{CString, NulError};
 use std::io::{stderr, Write};
@@ -80,8 +84,12 @@ impl RawConnection {
         ensure_sqlite_ok(result, self.internal_connection.as_ptr())
     }
 
-    pub(super) fn rows_affected_by_last_query(&self) -> usize {
-        unsafe { ffi::sqlite3_changes(self.internal_connection.as_ptr()) as usize }
+    pub(super) fn rows_affected_by_last_query(
+        &self,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        let r = unsafe { ffi::sqlite3_changes(self.internal_connection.as_ptr()) };
+
+        Ok(r.try_into()?)
     }
 
     pub(super) fn register_sql_function<F, Ret, RetSqlType>(
@@ -105,12 +113,15 @@ impl RawConnection {
         }));
         let fn_name = Self::get_fn_name(fn_name)?;
         let flags = Self::get_flags(deterministic);
+        let num_args = num_args
+            .try_into()
+            .map_err(|e| Error::SerializationError(Box::new(e)))?;
 
         let result = unsafe {
             ffi::sqlite3_create_function_v2(
                 self.internal_connection.as_ptr(),
                 fn_name.as_ptr(),
-                num_args as _,
+                num_args,
                 flags,
                 callback_fn as *mut _,
                 Some(run_custom_function::<F, Ret, RetSqlType>),
@@ -136,12 +147,15 @@ impl RawConnection {
     {
         let fn_name = Self::get_fn_name(fn_name)?;
         let flags = Self::get_flags(false);
+        let num_args = num_args
+            .try_into()
+            .map_err(|e| Error::SerializationError(Box::new(e)))?;
 
         let result = unsafe {
             ffi::sqlite3_create_function_v2(
                 self.internal_connection.as_ptr(),
                 fn_name.as_ptr(),
-                num_args as _,
+                num_args,
                 flags,
                 ptr::null_mut(),
                 None,
@@ -195,11 +209,19 @@ impl RawConnection {
                 &mut size as *mut _,
                 0,
             );
-            SerializedDatabase::new(data_ptr, size as usize)
+            SerializedDatabase::new(
+                data_ptr,
+                size.try_into()
+                    .expect("Cannot fit the serialized database into memory"),
+            )
         }
     }
 
     pub(super) fn deserialize(&mut self, data: &[u8]) -> QueryResult<()> {
+        let db_size = data
+            .len()
+            .try_into()
+            .map_err(|e| Error::DeserializationError(Box::new(e)))?;
         // the cast for `ffi::SQLITE_DESERIALIZE_READONLY` is required for old libsqlite3-sys versions
         #[allow(clippy::unnecessary_cast)]
         unsafe {
@@ -207,8 +229,8 @@ impl RawConnection {
                 self.internal_connection.as_ptr(),
                 std::ptr::null(),
                 data.as_ptr() as *mut u8,
-                data.len() as i64,
-                data.len() as i64,
+                db_size,
+                db_size,
                 ffi::SQLITE_DESERIALIZE_READONLY as u32,
             );
 
@@ -261,7 +283,7 @@ impl Drop for RawConnection {
 enum SqliteCallbackError {
     Abort(&'static str),
     DieselError(crate::result::Error),
-    Panic(Box<dyn std::any::Any + Send>, String),
+    Panic(String),
 }
 
 impl SqliteCallbackError {
@@ -273,7 +295,7 @@ impl SqliteCallbackError {
                 s = e.to_string();
                 &s
             }
-            SqliteCallbackError::Panic(_, msg) => msg,
+            SqliteCallbackError::Panic(msg) => msg,
         };
         unsafe {
             context_error_str(ctx, msg);
@@ -347,12 +369,7 @@ extern "C" fn run_custom_function<F, Ret, RetSqlType>(
         }
         Ok(())
     })
-    .unwrap_or_else(|p| {
-        Err(SqliteCallbackError::Panic(
-            p,
-            data_ptr.function_name.clone(),
-        ))
-    });
+    .unwrap_or_else(|p| Err(SqliteCallbackError::Panic(data_ptr.function_name.clone())));
     if let Err(e) = result {
         e.emit(ctx);
     }
@@ -383,10 +400,10 @@ extern "C" fn run_aggregator_step_function<ArgsSqlType, RetSqlType, Args, Ret, A
         run_aggregator_step::<A, Args, ArgsSqlType>(ctx, args)
     })
     .unwrap_or_else(|e| {
-        Err(SqliteCallbackError::Panic(
-            e,
-            format!("{}::step() panicked", std::any::type_name::<A>()),
-        ))
+        Err(SqliteCallbackError::Panic(format!(
+            "{}::step() panicked",
+            std::any::type_name::<A>()
+        )))
     });
 
     match result {
@@ -407,6 +424,9 @@ where
     static NULL_CTX_ERR: &str =
         "We've written the aggregator to the aggregate context, but it could not be retrieved.";
 
+    let n_bytes: i32 = std::mem::size_of::<OptionalAggregator<A>>()
+        .try_into()
+        .expect("Aggregate context should be larger than 2^32");
     let aggregate_context = unsafe {
         // This block of unsafe code makes the following assumptions:
         //
@@ -429,7 +449,7 @@ where
         //   the memory will have a correct alignment.
         //   (Note I(weiznich): would assume that it is aligned correctly, but we
         //    we cannot guarantee it, so better be safe than sorry)
-        ffi::sqlite3_aggregate_context(ctx, std::mem::size_of::<OptionalAggregator<A>>() as i32)
+        ffi::sqlite3_aggregate_context(ctx, n_bytes)
     };
     let aggregate_context = NonNull::new(aggregate_context as *mut OptionalAggregator<A>);
     let aggregator = unsafe {
@@ -491,16 +511,17 @@ extern "C" fn run_aggregator_final_function<ArgsSqlType, RetSqlType, Args, Ret, 
         let res = A::finalize(aggregator);
         let value = process_sql_function_result(&res)?;
         // We've checked already that ctx is not null
-        unsafe {
-            value.result_of(&mut *ctx);
-        }
+        let r = unsafe { value.result_of(&mut *ctx) };
+        r.map_err(|e| {
+            SqliteCallbackError::DieselError(crate::result::Error::SerializationError(Box::new(e)))
+        })?;
         Ok(())
     })
-    .unwrap_or_else(|e| {
-        Err(SqliteCallbackError::Panic(
-            e,
-            format!("{}::finalize() panicked", std::any::type_name::<A>()),
-        ))
+    .unwrap_or_else(|_e| {
+        Err(SqliteCallbackError::Panic(format!(
+            "{}::finalize() panicked",
+            std::any::type_name::<A>()
+        )))
     });
     if let Err(e) = result {
         e.emit(ctx);
@@ -508,7 +529,11 @@ extern "C" fn run_aggregator_final_function<ArgsSqlType, RetSqlType, Args, Ret, 
 }
 
 unsafe fn context_error_str(ctx: *mut ffi::sqlite3_context, error: &str) {
-    ffi::sqlite3_result_error(ctx, error.as_ptr() as *const _, error.len() as _);
+    let len: i32 = error
+        .len()
+        .try_into()
+        .expect("Trying to set a error message with more than 2^32 byte is not supported");
+    ffi::sqlite3_result_error(ctx, error.as_ptr() as *const _, len);
 }
 
 struct CollationUserPtr<F> {
@@ -570,7 +595,6 @@ where
     })
     .unwrap_or_else(|p| {
         Err(SqliteCallbackError::Panic(
-            p,
             user_ptr
                 .map(|u| u.collation_name.clone())
                 .unwrap_or_default(),
@@ -601,7 +625,7 @@ where
             );
             std::process::abort()
         }
-        Err(SqliteCallbackError::Panic(_, msg)) => {
+        Err(SqliteCallbackError::Panic(msg)) => {
             eprintln!("Collation function {} panicked", msg);
             std::process::abort()
         }

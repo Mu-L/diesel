@@ -1,4 +1,4 @@
-#[cfg(feature = "bigdecimal")]
+#[cfg(feature = "numeric")]
 mod bigdecimal {
     extern crate bigdecimal;
     extern crate num_bigint;
@@ -10,13 +10,12 @@ mod bigdecimal {
     use self::num_integer::Integer;
     use self::num_traits::{Signed, ToPrimitive, Zero};
 
-    use crate::deserialize::{self, FromSql};
+    use crate::deserialize::{self, Defaultable, FromSql};
     use crate::pg::data_types::PgNumeric;
     use crate::pg::{Pg, PgValue};
     use crate::serialize::{self, Output, ToSql};
     use crate::sql_types::Numeric;
 
-    use std::convert::{TryFrom, TryInto};
     use std::error::Error;
 
     /// Iterator over the digits of a big uint in base 10k.
@@ -37,7 +36,7 @@ mod bigdecimal {
         }
     }
 
-    #[cfg(all(feature = "postgres_backend", feature = "bigdecimal"))]
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl<'a> TryFrom<&'a PgNumeric> for BigDecimal {
         type Error = Box<dyn Error + Send + Sync>;
 
@@ -59,10 +58,10 @@ mod bigdecimal {
             };
 
             let mut result = BigUint::default();
-            let count = digits.len() as i64;
+            let count = i64::try_from(digits.len())?;
             for digit in digits {
                 result *= BigUint::from(10_000u64);
-                result += BigUint::from(*digit as u64);
+                result += BigUint::from(u64::try_from(*digit)?);
             }
             // First digit got factor 10_000^(digits.len() - 1), but should get 10_000^weight
             let correction_exp = 4 * (i64::from(weight) - count + 1);
@@ -72,7 +71,7 @@ mod bigdecimal {
         }
     }
 
-    #[cfg(all(feature = "postgres_backend", feature = "bigdecimal"))]
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl TryFrom<PgNumeric> for BigDecimal {
         type Error = Box<dyn Error + Send + Sync>;
 
@@ -81,7 +80,9 @@ mod bigdecimal {
         }
     }
 
-    #[cfg(all(feature = "postgres_backend", feature = "bigdecimal"))]
+    // that should likely be a `TryFrom` impl
+    // TODO: diesel 3.0
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl<'a> From<&'a BigDecimal> for PgNumeric {
         // NOTE(clippy): No `std::ops::MulAssign` impl for `BigInt`
         // NOTE(clippy): Clippy suggests to replace the `.take_while(|i| i.is_zero())`
@@ -99,7 +100,9 @@ mod bigdecimal {
                 }
                 0
             } else {
-                scale as u16
+                scale
+                    .try_into()
+                    .expect("Scale is expected to be 16bit large")
             };
 
             integer = integer.abs();
@@ -113,7 +116,11 @@ mod bigdecimal {
             let mut digits = ToBase10000(Some(integer)).collect::<Vec<_>>();
             digits.reverse();
             let digits_after_decimal = scale / 4 + 1;
-            let weight = digits.len() as i16 - digits_after_decimal as i16 - 1;
+            let weight = i16::try_from(digits.len())
+                .expect("Max digit number is expected to fit into 16 bit")
+                - i16::try_from(digits_after_decimal)
+                    .expect("Max digit number is expected to fit into 16 bit")
+                - 1;
 
             let unnecessary_zeroes = digits.iter().rev().take_while(|i| i.is_zero()).count();
 
@@ -140,14 +147,14 @@ mod bigdecimal {
         }
     }
 
-    #[cfg(all(feature = "postgres_backend", feature = "bigdecimal"))]
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl From<BigDecimal> for PgNumeric {
         fn from(bigdecimal: BigDecimal) -> Self {
             (&bigdecimal).into()
         }
     }
 
-    #[cfg(all(feature = "postgres_backend", feature = "bigdecimal"))]
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl ToSql<Numeric, Pg> for BigDecimal {
         fn to_sql<'b>(&'b self, out: &mut Output<'b, '_, Pg>) -> serialize::Result {
             let numeric = PgNumeric::from(self);
@@ -155,10 +162,17 @@ mod bigdecimal {
         }
     }
 
-    #[cfg(all(feature = "postgres_backend", feature = "bigdecimal"))]
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
     impl FromSql<Numeric, Pg> for BigDecimal {
         fn from_sql(numeric: PgValue<'_>) -> deserialize::Result<Self> {
             PgNumeric::from_sql(numeric)?.try_into()
+        }
+    }
+
+    #[cfg(all(feature = "postgres_backend", feature = "numeric"))]
+    impl Defaultable for BigDecimal {
+        fn default_value() -> Self {
+            Self::default()
         }
     }
 
@@ -167,7 +181,7 @@ mod bigdecimal {
         use super::*;
         use std::str::FromStr;
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_to_pgnumeric_converts_digits_to_base_10000() {
             let decimal = BigDecimal::from_str("1").unwrap();
             let expected = PgNumeric::Positive {
@@ -210,7 +224,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_to_pg_numeric_properly_adjusts_scale() {
             let decimal = BigDecimal::from_str("1").unwrap();
             let expected = PgNumeric::Positive {
@@ -261,7 +275,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_to_pg_numeric_retains_sign() {
             let decimal = BigDecimal::from_str("123.456").unwrap();
             let expected = PgNumeric::Positive {
@@ -280,7 +294,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_with_negative_scale_to_pg_numeric_works() {
             let decimal = BigDecimal::new(50.into(), -2);
             let expected = PgNumeric::Positive {
@@ -299,7 +313,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn bigdecimal_with_negative_weight_to_pg_numeric_works() {
             let decimal = BigDecimal::from_str("0.1000000000000000").unwrap();
             let expected = PgNumeric::Positive {
@@ -326,7 +340,7 @@ mod bigdecimal {
             assert_eq!(expected, decimal.into());
         }
 
-        #[test]
+        #[diesel_test_helper::test]
         fn pg_numeric_to_bigdecimal_works() {
             let expected = BigDecimal::from_str("123.456").unwrap();
             let pg_numeric = PgNumeric::Positive {

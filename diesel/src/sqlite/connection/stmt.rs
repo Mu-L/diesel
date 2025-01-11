@@ -3,12 +3,16 @@ use super::bind_collector::{InternalSqliteBindValue, SqliteBindCollector};
 use super::raw::RawConnection;
 use super::sqlite_value::OwnedSqliteValue;
 use crate::connection::statement_cache::{MaybeCached, PrepareForCache};
+use crate::connection::Instrumentation;
 use crate::query_builder::{QueryFragment, QueryId};
 use crate::result::Error::DatabaseError;
 use crate::result::*;
 use crate::sqlite::{Sqlite, SqliteType};
-use crate::util::OnceCell;
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
 use libsqlite3_sys as ffi;
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+use sqlite_wasm_rs::export as ffi;
+use std::cell::OnceCell;
 use std::ffi::{CStr, CString};
 use std::io::{stderr, Write};
 use std::os::raw as libc;
@@ -18,22 +22,33 @@ pub(super) struct Statement {
     inner_statement: NonNull<ffi::sqlite3_stmt>,
 }
 
+// This relies on the invariant that RawConnection or Statement are never
+// leaked. If a reference to one of those was held on a different thread, this
+// would not be thread safe.
+#[allow(unsafe_code)]
+unsafe impl Send for Statement {}
+
 impl Statement {
     pub(super) fn prepare(
         raw_connection: &RawConnection,
         sql: &str,
         is_cached: PrepareForCache,
+        _: &[SqliteType],
     ) -> QueryResult<Self> {
         let mut stmt = ptr::null_mut();
         let mut unused_portion = ptr::null();
+        let n_byte = sql
+            .len()
+            .try_into()
+            .map_err(|e| Error::SerializationError(Box::new(e)))?;
         // the cast for `ffi::SQLITE_PREPARE_PERSISTENT` is required for old libsqlite3-sys versions
         #[allow(clippy::unnecessary_cast)]
         let prepare_result = unsafe {
             ffi::sqlite3_prepare_v3(
                 raw_connection.internal_connection.as_ptr(),
                 CString::new(sql)?.as_ptr(),
-                sql.len() as libc::c_int,
-                if matches!(is_cached, PrepareForCache::Yes) {
+                n_byte,
+                if matches!(is_cached, PrepareForCache::Yes { counter: _ }) {
                     ffi::SQLITE_PREPARE_PERSISTENT as u32
                 } else {
                     0
@@ -43,11 +58,14 @@ impl Statement {
             )
         };
 
-        ensure_sqlite_ok(prepare_result, raw_connection.internal_connection.as_ptr()).map(|_| {
-            Statement {
-                inner_statement: unsafe { NonNull::new_unchecked(stmt) },
-            }
-        })
+        ensure_sqlite_ok(prepare_result, raw_connection.internal_connection.as_ptr())?;
+
+        // sqlite3_prepare_v3 returns a null pointer for empty statements. This includes
+        // empty or only whitespace strings or any other non-op query string like a comment
+        let inner_statement = NonNull::new(stmt).ok_or_else(|| {
+            crate::result::Error::QueryBuilderError(Box::new(crate::result::EmptyQuery))
+        })?;
+        Ok(Statement { inner_statement })
     }
 
     // The caller of this function has to ensure that:
@@ -67,16 +85,23 @@ impl Statement {
                 ffi::sqlite3_bind_null(self.inner_statement.as_ptr(), bind_index)
             }
             (SqliteType::Binary, InternalSqliteBindValue::BorrowedBinary(bytes)) => {
+                let n = bytes
+                    .len()
+                    .try_into()
+                    .map_err(|e| Error::SerializationError(Box::new(e)))?;
                 ffi::sqlite3_bind_blob(
                     self.inner_statement.as_ptr(),
                     bind_index,
                     bytes.as_ptr() as *const libc::c_void,
-                    bytes.len() as libc::c_int,
+                    n,
                     ffi::SQLITE_STATIC(),
                 )
             }
             (SqliteType::Binary, InternalSqliteBindValue::Binary(mut bytes)) => {
-                let len = bytes.len();
+                let len = bytes
+                    .len()
+                    .try_into()
+                    .map_err(|e| Error::SerializationError(Box::new(e)))?;
                 // We need a separate pointer here to pass it to sqlite
                 // as the returned pointer is a pointer to a dyn sized **slice**
                 // and not the pointer to the first element of the slice
@@ -86,22 +111,29 @@ impl Statement {
                     self.inner_statement.as_ptr(),
                     bind_index,
                     ptr as *const libc::c_void,
-                    len as libc::c_int,
+                    len,
                     ffi::SQLITE_STATIC(),
                 )
             }
             (SqliteType::Text, InternalSqliteBindValue::BorrowedString(bytes)) => {
+                let len = bytes
+                    .len()
+                    .try_into()
+                    .map_err(|e| Error::SerializationError(Box::new(e)))?;
                 ffi::sqlite3_bind_text(
                     self.inner_statement.as_ptr(),
                     bind_index,
                     bytes.as_ptr() as *const libc::c_char,
-                    bytes.len() as libc::c_int,
+                    len,
                     ffi::SQLITE_STATIC(),
                 )
             }
             (SqliteType::Text, InternalSqliteBindValue::String(bytes)) => {
                 let mut bytes = Box::<[u8]>::from(bytes);
-                let len = bytes.len();
+                let len = bytes
+                    .len()
+                    .try_into()
+                    .map_err(|e| Error::SerializationError(Box::new(e)))?;
                 // We need a separate pointer here to pass it to sqlite
                 // as the returned pointer is a pointer to a dyn sized **slice**
                 // and not the pointer to the first element of the slice
@@ -111,7 +143,7 @@ impl Statement {
                     self.inner_statement.as_ptr(),
                     bind_index,
                     ptr as *const libc::c_char,
-                    len as libc::c_int,
+                    len,
                     ffi::SQLITE_STATIC(),
                 )
             }
@@ -235,12 +267,15 @@ struct BoundStatement<'stmt, 'query> {
     // contained in the query itself. We use NonNull to
     // communicate that this is a shared buffer
     binds_to_free: Vec<(i32, Option<NonNull<[u8]>>)>,
+    instrumentation: &'stmt mut dyn Instrumentation,
+    has_error: bool,
 }
 
 impl<'stmt, 'query> BoundStatement<'stmt, 'query> {
     fn bind<T>(
         statement: MaybeCached<'stmt, Statement>,
         query: T,
+        instrumentation: &'stmt mut dyn Instrumentation,
     ) -> QueryResult<BoundStatement<'stmt, 'query>>
     where
         T: QueryFragment<Sqlite> + QueryId + 'query,
@@ -259,6 +294,8 @@ impl<'stmt, 'query> BoundStatement<'stmt, 'query> {
             statement,
             query: None,
             binds_to_free: Vec::new(),
+            instrumentation,
+            has_error: false,
         };
 
         ret.bind_buffers(binds)?;
@@ -322,9 +359,23 @@ impl<'stmt, 'query> BoundStatement<'stmt, 'query> {
         }
         Ok(())
     }
+
+    fn finish_query_with_error(mut self, e: &Error) {
+        self.has_error = true;
+        if let Some(q) = self.query {
+            // it's safe to get a reference from this ptr as it's guaranteed to not be null
+            let q = unsafe { q.as_ref() };
+            self.instrumentation.on_connection_event(
+                crate::connection::InstrumentationEvent::FinishQuery {
+                    query: &crate::debug_query(&q),
+                    error: Some(e),
+                },
+            );
+        }
+    }
 }
 
-impl<'stmt, 'query> Drop for BoundStatement<'stmt, 'query> {
+impl Drop for BoundStatement<'_, '_> {
     fn drop(&mut self) {
         // First reset the statement, otherwise the bind calls
         // below will fails
@@ -353,11 +404,20 @@ impl<'stmt, 'query> Drop for BoundStatement<'stmt, 'query> {
         }
 
         if let Some(query) = self.query {
-            unsafe {
+            let query = unsafe {
                 // Constructing the `Box` here is safe as we
                 // got the pointer from a box + it is guaranteed to be not null.
-                std::mem::drop(Box::from_raw(query.as_ptr()));
+                Box::from_raw(query.as_ptr())
+            };
+            if !self.has_error {
+                self.instrumentation.on_connection_event(
+                    crate::connection::InstrumentationEvent::FinishQuery {
+                        query: &crate::debug_query(&query),
+                        error: None,
+                    },
+                );
             }
+            std::mem::drop(query);
             self.query = None;
         }
     }
@@ -373,23 +433,28 @@ impl<'stmt, 'query> StatementUse<'stmt, 'query> {
     pub(super) fn bind<T>(
         statement: MaybeCached<'stmt, Statement>,
         query: T,
+        instrumentation: &'stmt mut dyn Instrumentation,
     ) -> QueryResult<StatementUse<'stmt, 'query>>
     where
         T: QueryFragment<Sqlite> + QueryId + 'query,
     {
         Ok(Self {
-            statement: BoundStatement::bind(statement, query)?,
+            statement: BoundStatement::bind(statement, query, instrumentation)?,
             column_names: OnceCell::new(),
         })
     }
 
     pub(super) fn run(mut self) -> QueryResult<()> {
-        unsafe {
+        let r = unsafe {
             // This is safe as we pass `first_step = true`
             // and we consume the statement so nobody could
             // access the columns later on anyway.
             self.step(true).map(|_| ())
+        };
+        if let Err(ref e) = r {
+            self.statement.finish_query_with_error(e);
         }
+        r
     }
 
     // This function is marked as unsafe incorrectly passing `false` to `first_step`
@@ -447,7 +512,10 @@ impl<'stmt, 'query> StatementUse<'stmt, 'query> {
     pub(super) fn index_for_column_name(&mut self, field_name: &str) -> Option<usize> {
         (0..self.column_count())
             .find(|idx| self.field_name(*idx) == Some(field_name))
-            .map(|v| v as usize)
+            .map(|v| {
+                v.try_into()
+                    .expect("Diesel expects to run at least on a 32 bit platform")
+            })
     }
 
     pub(super) fn field_name(&self, idx: i32) -> Option<&str> {
@@ -463,7 +531,7 @@ impl<'stmt, 'query> StatementUse<'stmt, 'query> {
         });
 
         column_names
-            .get(idx as usize)
+            .get(usize::try_from(idx).expect("Diesel expects to run at least on a 32 bit platform"))
             .and_then(|c| unsafe { c.as_ref() })
     }
 
@@ -483,11 +551,10 @@ impl<'stmt, 'query> StatementUse<'stmt, 'query> {
 mod tests {
     use crate::prelude::*;
     use crate::sql_types::Text;
-    use crate::SqliteConnection;
 
     // this is a regression test for
     // https://github.com/diesel-rs/diesel/issues/3558
-    #[test]
+    #[diesel_test_helper::test]
     fn check_out_of_bounds_bind_does_not_panic_on_drop() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
 

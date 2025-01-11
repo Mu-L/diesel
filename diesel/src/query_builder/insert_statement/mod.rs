@@ -5,19 +5,24 @@ mod insert_from_select;
 pub(crate) use self::batch_insert::BatchInsert;
 pub(crate) use self::column_list::ColumnList;
 pub(crate) use self::insert_from_select::InsertFromSelect;
-pub(crate) use self::private::{Insert, InsertOrIgnore, Replace};
+pub(crate) use self::private::Insert;
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+pub(crate) use self::private::{InsertOrIgnore, Replace};
 
 use super::returning_clause::*;
-use crate::backend::{sql_dialect, Backend, DieselReserveSpecialization, SqlDialect};
+use crate::backend::{sql_dialect, DieselReserveSpecialization, SqlDialect};
 use crate::expression::grouped::Grouped;
 use crate::expression::operators::Eq;
 use crate::expression::{Expression, NonAggregate, SelectableExpression};
 use crate::query_builder::*;
 use crate::query_dsl::RunQueryDsl;
 use crate::query_source::{Column, Table};
-use crate::result::QueryResult;
 use crate::{insertable::*, QuerySource};
 use std::marker::PhantomData;
+
+pub(crate) use self::private::InsertAutoTypeHelper;
 
 #[cfg(feature = "sqlite")]
 mod insert_with_default_for_sqlite;
@@ -281,8 +286,12 @@ impl<T: QuerySource, U, Op> InsertStatement<T, U, Op> {
     /// let inserted_names = diesel::insert_into(users)
     ///     .values(&vec![name.eq("Timmy"), name.eq("Jimmy")])
     ///     .returning(name)
-    ///     .get_results(connection);
-    /// assert_eq!(Ok(vec!["Timmy".to_string(), "Jimmy".to_string()]), inserted_names);
+    ///     .get_results(connection)
+    ///     .unwrap();
+    /// // Note that the returned order is not guaranteed to be preserved
+    /// assert_eq!(inserted_names.len(), 2);
+    /// assert!(inserted_names.contains(&"Timmy".to_string()));
+    /// assert!(inserted_names.contains(&"Jimmy".to_string()));
     /// # }
     /// # #[cfg(not(feature = "postgres"))]
     /// # fn main() {}
@@ -312,10 +321,7 @@ impl<T: QuerySource, U, Op> InsertStatement<T, U, Op> {
 )]
 pub trait UndecoratedInsertRecord<Table> {}
 
-impl<'a, T, Tab> UndecoratedInsertRecord<Tab> for &'a T where
-    T: ?Sized + UndecoratedInsertRecord<Tab>
-{
-}
+impl<T, Tab> UndecoratedInsertRecord<Tab> for &T where T: ?Sized + UndecoratedInsertRecord<Tab> {}
 
 impl<T, U> UndecoratedInsertRecord<T::Table> for ColumnInsertValue<T, U> where T: Column {}
 
@@ -374,7 +380,7 @@ impl<Tab> Insertable<Tab> for DefaultValues {
     }
 }
 
-impl<'a, Tab> Insertable<Tab> for &'a DefaultValues {
+impl<Tab> Insertable<Tab> for &DefaultValues {
     type Values = DefaultValues;
 
     fn values(self) -> Self::Values {
@@ -450,7 +456,7 @@ impl<T, Tab, DB> QueryFragment<DB> for ValuesClause<T, Tab>
 where
     DB: Backend,
     Tab: Table,
-    T: InsertValues<Tab, DB>,
+    T: InsertValues<DB, Tab>,
     DefaultValues: QueryFragment<DB>,
 {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
@@ -485,6 +491,7 @@ mod private {
         }
     }
 
+    /// A marker type for insert or ignore statements
     #[derive(Debug, Copy, Clone, QueryId)]
     pub struct InsertOrIgnore;
 
@@ -510,6 +517,7 @@ mod private {
         }
     }
 
+    /// A marker type for replace statements
     #[derive(Debug, Copy, Clone, QueryId)]
     pub struct Replace;
 
@@ -533,5 +541,17 @@ mod private {
             out.push_sql("REPLACE");
             Ok(())
         }
+    }
+
+    // otherwise rustc complains at a different location that this trait is more private than the other item that uses it
+    #[allow(unreachable_pub)]
+    pub trait InsertAutoTypeHelper {
+        type Table;
+        type Op;
+    }
+
+    impl<T, Op> InsertAutoTypeHelper for crate::query_builder::IncompleteInsertStatement<T, Op> {
+        type Table = T;
+        type Op = Op;
     }
 }

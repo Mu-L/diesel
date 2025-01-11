@@ -15,7 +15,7 @@ use diesel::query_builder::*;
 use diesel::sql_types::SqlType;
 use diesel::*;
 
-#[test]
+#[diesel_test_helper::test]
 fn test_count_counts_the_rows() {
     let connection = &mut connection();
     let source = users.select(count(id));
@@ -28,7 +28,7 @@ fn test_count_counts_the_rows() {
     assert_eq!(Ok(1), source.first(connection));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_count_star() {
     let connection = &mut connection();
     let source = users.count();
@@ -52,7 +52,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_count_max() {
     use self::numbers::columns::*;
     use self::numbers::table as numbers;
@@ -81,7 +81,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn test_min_max_of_array() {
     use self::number_arrays::dsl::*;
@@ -122,7 +122,7 @@ fn test_min_max_of_array() {
     assert_eq!(Ok(None::<Vec<i32>>), min_query.first(connection));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn max_returns_same_type_as_expression_being_maximized() {
     let connection = &mut connection();
     let source = users.select(max(name));
@@ -176,7 +176,7 @@ fn arbitrary<T>() -> Arbitrary<T> {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn max_accepts_all_numeric_string_and_date_types() {
     let _ = users.select(max(arbitrary::<sql_types::SmallInt>()));
     let _ = users.select(max(arbitrary::<sql_types::Integer>()));
@@ -197,7 +197,7 @@ fn max_accepts_all_numeric_string_and_date_types() {
     let _ = users.select(max(arbitrary::<sql_types::Nullable<sql_types::Text>>()));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_min() {
     use self::numbers::columns::*;
     use self::numbers::table as numbers;
@@ -219,9 +219,9 @@ fn test_min() {
     assert_eq!(Ok(None::<i32>), source.first(connection));
 }
 
-sql_function!(fn coalesce(x: sql_types::Nullable<sql_types::VarChar>, y: sql_types::VarChar) -> sql_types::VarChar);
+define_sql_function!(fn coalesce(x: sql_types::Nullable<sql_types::VarChar>, y: sql_types::VarChar) -> sql_types::VarChar);
 
-#[test]
+#[diesel_test_helper::test]
 fn function_with_multiple_arguments() {
     use crate::schema::users::dsl::*;
 
@@ -238,12 +238,13 @@ fn function_with_multiple_arguments() {
     let expected_data = vec!["black".to_string(), "Tess".to_string()];
     let data = users
         .select(coalesce(hair_color, name))
+        .order(id)
         .load::<String>(connection);
 
     assert_eq!(Ok(expected_data), data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_sum() {
     use self::numbers::columns::*;
     use self::numbers::table as numbers;
@@ -271,7 +272,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_sum_for_double() {
     use self::precision_numbers::columns::*;
     use self::precision_numbers::table as numbers;
@@ -300,7 +301,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_sum_for_nullable() {
     use self::nullable_doubles::columns::*;
     use self::nullable_doubles::table as numbers;
@@ -318,7 +319,7 @@ fn test_sum_for_nullable() {
     assert_eq!(Ok(None), source.first::<Option<f64>>(connection));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_avg() {
     use self::precision_numbers::columns::*;
     use self::precision_numbers::table as numbers;
@@ -340,7 +341,7 @@ fn test_avg() {
     assert_eq!(Ok(None::<f64>), source.first(connection));
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_avg_integer() {
     let conn = &mut connection_with_sean_and_tess_in_users_table();
     let avg_id = users.select(avg(id)).get_result(conn);
@@ -348,7 +349,7 @@ fn test_avg_integer() {
     assert_eq!(Ok(Some(expected)), avg_id);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn test_avg_for_nullable() {
     use self::nullable_doubles::columns::*;
     use self::nullable_doubles::table as numbers;
@@ -366,7 +367,7 @@ fn test_avg_for_nullable() {
     assert_eq!(Ok(None), source.first::<Option<f64>>(connection));
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")] // FIXME: We need to test this on SQLite when we support these types
 fn test_avg_for_integer() {
     use self::numbers::columns::*;
@@ -404,7 +405,7 @@ table! {
     }
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")] // FIXME: We need to test this on MySQL
 fn test_avg_for_numeric() {
     use self::numeric::columns::*;
@@ -428,7 +429,7 @@ fn test_avg_for_numeric() {
     assert_eq!(Ok(Some(expected_result)), result);
 }
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn test_arrays_a() {
     let connection = &mut connection();
@@ -444,9 +445,9 @@ fn test_arrays_a() {
 #[cfg(feature = "postgres")]
 use diesel::sql_types::{Array, Int4};
 #[cfg(feature = "postgres")]
-sql_function!(fn unnest(a: Array<Int4>) -> Int4);
+define_sql_function!(fn unnest(a: Array<Int4>) -> Int4);
 
-#[test]
+#[diesel_test_helper::test]
 #[cfg(feature = "postgres")]
 fn test_arrays_b() {
     use self::numbers::columns::*;
@@ -465,7 +466,25 @@ fn test_arrays_b() {
     assert_eq!(value, vec![7, 14]);
 }
 
-#[test]
+#[diesel_test_helper::test]
+#[cfg(feature = "postgres")]
+fn test_arrays_c() {
+    use self::numbers::columns::*;
+    use self::numbers::table as numbers;
+
+    let connection = &mut connection();
+    diesel::sql_query("INSERT INTO numbers (n) VALUES (7), (8)")
+        .execute(connection)
+        .unwrap();
+
+    let value = diesel::select(array(numbers.select(n).order_by(n)))
+        .first::<Vec<i32>>(connection)
+        .unwrap();
+
+    assert_eq!(value, vec![7, 8]);
+}
+
+#[diesel_test_helper::test]
 fn test_operator_precedence() {
     use self::numbers;
 
