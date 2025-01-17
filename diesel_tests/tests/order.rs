@@ -1,7 +1,7 @@
 use crate::schema::*;
 use diesel::*;
 
-#[test]
+#[diesel_test_helper::test]
 fn order_by_column() {
     use crate::schema::users::dsl::*;
 
@@ -12,10 +12,10 @@ fn order_by_column() {
         NewUser::new("Jim", None),
     ];
     insert_into(users).values(&data).execute(conn).unwrap();
-    let data = users.load::<User>(conn).unwrap();
-    let sean = &data[0];
-    let tess = &data[1];
-    let jim = &data[2];
+    let data = users.order(name).load::<User>(conn).unwrap();
+    let sean = &data[1];
+    let tess = &data[2];
+    let jim = &data[0];
 
     let expected_data = vec![
         User::new(jim.id, "Jim"),
@@ -40,7 +40,7 @@ fn order_by_column() {
     assert_eq!(expected_data, data);
 }
 
-#[test]
+#[diesel_test_helper::test]
 fn order_by_descending_column() {
     use crate::schema::users::dsl::*;
 
@@ -80,7 +80,7 @@ fn order_by_descending_column() {
 }
 
 // regression test for #3412
-#[test]
+#[diesel_test_helper::test]
 fn dynamic_order() {
     use crate::schema::users;
     use diesel::expression::expression_types::NotSelectable;

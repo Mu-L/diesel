@@ -3,6 +3,7 @@
 use crate::backend::Backend;
 use crate::deserialize;
 use deserialize::FromSql;
+use std::default::Default;
 use std::ops::Range;
 
 #[cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes")]
@@ -148,6 +149,21 @@ where
     }
 }
 
+/// A row that can be turned into an owned version
+#[diesel_derives::__diesel_public_if(
+    feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"
+)]
+pub trait IntoOwnedRow<'a, DB: Backend>: Row<'a, DB> {
+    /// The owned version of the row
+    type OwnedRow: Row<'a, DB> + Send + 'static;
+
+    /// A store for cached information between rows for faster access
+    type Cache: Default + 'static;
+
+    /// Turn the row into its owned version
+    fn into_owned(self, cache: &mut Self::Cache) -> Self::OwnedRow;
+}
+
 // These traits are not part of the public API
 // because:
 // * we want to control who can implement `Row` (for `RowSealed`)
@@ -158,7 +174,7 @@ pub(crate) mod private {
 
     /// This trait restricts who can implement `Row`
     #[cfg_attr(
-        doc_cfg,
+        docsrs,
         doc(cfg(feature = "i-implement-a-third-party-backend-and-opt-into-breaking-changes"))
     )]
     pub trait RowSealed {}
@@ -201,14 +217,19 @@ pub(crate) mod private {
         }
     }
 
-    impl<'a, R> RowSealed for PartialRow<'a, R> {}
+    impl<R> RowSealed for PartialRow<'_, R> {}
 
-    impl<'a, 'b, DB, R> Row<'a, DB> for PartialRow<'b, R>
+    impl<'a, DB, R> Row<'a, DB> for PartialRow<'_, R>
     where
         DB: Backend,
         R: Row<'a, DB>,
     {
-        type Field<'f> = R::Field<'f> where 'a: 'f, R: 'f, Self: 'f;
+        type Field<'f>
+            = R::Field<'f>
+        where
+            'a: 'f,
+            R: 'f,
+            Self: 'f;
         type InnerPartialRow = R;
 
         fn field_count(&self) -> usize {
@@ -234,7 +255,7 @@ pub(crate) mod private {
         }
     }
 
-    impl<'a, 'b, R> RowIndex<&'a str> for PartialRow<'b, R>
+    impl<'a, R> RowIndex<&'a str> for PartialRow<'_, R>
     where
         R: RowIndex<&'a str>,
     {
@@ -248,7 +269,7 @@ pub(crate) mod private {
         }
     }
 
-    impl<'a, R> RowIndex<usize> for PartialRow<'a, R>
+    impl<R> RowIndex<usize> for PartialRow<'_, R>
     where
         R: RowIndex<usize>,
     {
@@ -281,6 +302,9 @@ pub(crate) mod private {
         DB: Backend,
         for<'a> R: super::Row<'a, DB>,
     {
-        type Field<'f> = <R as super::Row<'f, DB>>::Field<'f> where R: 'f;
+        type Field<'f>
+            = <R as super::Row<'f, DB>>::Field<'f>
+        where
+            R: 'f;
     }
 }

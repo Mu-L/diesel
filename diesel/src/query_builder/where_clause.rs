@@ -1,10 +1,9 @@
 use super::from_clause::AsQuerySource;
 use super::*;
-use crate::backend::{Backend, DieselReserveSpecialization};
+use crate::backend::DieselReserveSpecialization;
 use crate::expression::grouped::Grouped;
 use crate::expression::operators::{And, Or};
 use crate::expression::*;
-use crate::result::QueryResult;
 use crate::sql_types::BoolOrNullableBool;
 
 /// Add `Predicate` to the current `WHERE` clause, joining with `AND` if
@@ -64,7 +63,7 @@ where
     }
 }
 
-impl<'a, DB> From<NoWhereClause> for BoxedWhereClause<'a, DB> {
+impl<DB> From<NoWhereClause> for BoxedWhereClause<'_, DB> {
     fn from(_: NoWhereClause) -> Self {
         BoxedWhereClause::None
     }
@@ -148,7 +147,7 @@ pub enum BoxedWhereClause<'a, DB> {
     None,
 }
 
-impl<'a, DB> QueryFragment<DB> for BoxedWhereClause<'a, DB>
+impl<DB> QueryFragment<DB> for BoxedWhereClause<'_, DB>
 where
     DB: Backend + DieselReserveSpecialization,
 {
@@ -163,7 +162,7 @@ where
     }
 }
 
-impl<'a, DB> QueryId for BoxedWhereClause<'a, DB> {
+impl<DB> QueryId for BoxedWhereClause<'_, DB> {
     type QueryId = ();
 
     const HAS_STATIC_QUERY_ID: bool = false;

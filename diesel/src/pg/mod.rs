@@ -16,7 +16,8 @@ pub(crate) mod serialize;
 mod transaction;
 mod value;
 
-pub use self::backend::{Pg, PgTypeMetadata};
+#[doc(inline)]
+pub use self::backend::{Pg, PgNotification, PgTypeMetadata};
 #[cfg(feature = "postgres")]
 pub use self::connection::{PgConnection, PgRowByRowLoadingMode};
 #[doc(inline)]
@@ -27,6 +28,8 @@ pub use self::query_builder::DistinctOnClause;
 pub use self::query_builder::OrderDecorator;
 #[doc(inline)]
 pub use self::query_builder::PgQueryBuilder;
+#[doc(inline)]
+pub use self::query_builder::{CopyFormat, CopyFromQuery, CopyHeader, CopyTarget, CopyToQuery};
 #[doc(inline)]
 pub use self::transaction::TransactionBuilder;
 #[doc(inline)]

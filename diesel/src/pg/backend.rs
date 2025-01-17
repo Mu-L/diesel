@@ -4,6 +4,7 @@ use super::query_builder::PgQueryBuilder;
 use super::{PgMetadataLookup, PgValue};
 use crate::backend::*;
 use crate::deserialize::Queryable;
+use crate::expression::operators::LikeIsAllowedForType;
 use crate::pg::metadata_lookup::PgMetadataCacheKey;
 use crate::query_builder::bind_collector::RawBytesBindCollector;
 use crate::sql_types::TypeMetadata;
@@ -154,3 +155,22 @@ impl sql_dialect::on_conflict_clause::PgLikeOnConflictClause for PgOnConflictCla
 
 #[derive(Debug, Copy, Clone)]
 pub struct PgStyleArrayComparison;
+
+impl LikeIsAllowedForType<crate::sql_types::Binary> for Pg {}
+
+// Using the same field names as tokio-postgres
+/// See Postgres documentation for SQL Commands NOTIFY and LISTEN
+#[derive(Clone, Debug)]
+pub struct PgNotification {
+    /// process ID of notifying server process
+    pub process_id: i32,
+    /// Name of the notification channel
+    pub channel: String,
+    /// optional data that was submitted with the notification,
+    ///
+    /// This is set to an empty string if no data was submitted
+    ///
+    /// (Postgres unfortunally does not provide a way to differentiate between
+    /// not set and empty here)
+    pub payload: String,
+}

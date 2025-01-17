@@ -93,8 +93,10 @@ where
 }
 
 pub fn wrap_in_dummy_mod(item: TokenStream) -> TokenStream {
+    // #[allow(unused_qualifications)] can be removed if https://github.com/rust-lang/rust/issues/130277 gets done
     quote! {
         #[allow(unused_imports)]
+        #[allow(unused_qualifications)]
         const _: () = {
             // This import is not actually redundant. When using diesel_derives
             // inside of diesel, `diesel` doesn't exist as an extern crate, and
@@ -117,8 +119,17 @@ pub fn is_option_ty(ty: &Type) -> bool {
     option_ty_arg(ty).is_some()
 }
 
-fn option_ty_arg(ty: &Type) -> Option<&Type> {
+fn option_ty_arg(mut ty: &Type) -> Option<&Type> {
     use syn::PathArguments::AngleBracketed;
+
+    // Check the inner equivalent type
+    loop {
+        match ty {
+            Type::Group(group) => ty = &group.elem,
+            Type::Paren(paren) => ty = &paren.elem,
+            _ => break,
+        }
+    }
 
     match *ty {
         Type::Path(ref ty) => {

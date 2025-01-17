@@ -2,11 +2,14 @@ use super::backend::Pg;
 use crate::query_builder::QueryBuilder;
 use crate::result::QueryResult;
 
+pub(crate) mod copy;
 mod distinct_on;
 mod limit_offset;
 pub(crate) mod on_constraint;
 pub(crate) mod only;
 mod query_fragment_impls;
+pub(crate) mod tablesample;
+pub use self::copy::{CopyFormat, CopyFromQuery, CopyHeader, CopyTarget, CopyToQuery};
 pub use self::distinct_on::DistinctOnClause;
 pub use self::distinct_on::OrderDecorator;
 
@@ -54,7 +57,8 @@ impl QueryBuilder<Pg> for PgQueryBuilder {
     }
 }
 
-#[test]
+#[cfg(test)]
+#[diesel_test_helper::test]
 fn check_sql_query_increments_bind_count() {
     use crate::query_builder::{AstPass, AstPassToSqlOptions, QueryFragment};
     use crate::sql_types::*;
